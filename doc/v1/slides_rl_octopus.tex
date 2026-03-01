@@ -1,0 +1,297 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta}
+
+% Notes setup: keep hidden by default.
+% For presenter notes output, uncomment one of:
+% \setbeameroption{show notes}
+% \setbeameroption{show notes on second screen=right}
+\setbeameroption{hide notes}
+
+\title[RL for Octopus Memory Pooling]{RL-Based Memory Pooling for Octopus CXL Systems}
+\subtitle{8-minute advisor update}
+\author{Pulak Mehrotra}
+\date{\today}
+
+% Figure helper for fast iteration when files move.
+\newcommand{\figorplaceholder}[2]{%
+  \IfFileExists{#1}{%
+    \includegraphics[width=\linewidth,height=#2,keepaspectratio]{#1}%
+  }{%
+    \fbox{\parbox[c][#2][c]{0.9\linewidth}{\centering Missing figure:\\\texttt{#1}}}%
+  }%
+}
+
+\begin{document}
+
+% ----------------------------------------------------------------
+\begin{frame}
+  \titlepage
+  \note{
+  Talk track: framing for an 8-minute technical overview.
+  Main message to advisor: RL is not yet better than greedy everywhere, but with
+  temporal signals and better shaping it is moving toward the gap to optimal.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{1) What is RL?}
+  \begin{itemize}
+    \item Reinforcement Learning (RL) learns a policy by trial-and-error interaction.
+    \item At each decision event:
+      \[
+      s_t \xrightarrow{\pi_\theta} a_t,\quad r_t,\quad s_{t+1}
+      \]
+    \item Objective:
+      \[
+      \max_{\pi_\theta}\ \mathbb{E}\!\left[\sum_{t=0}^{T}\gamma^t r_t\right]
+      \]
+    \item In this project, each VM arrival is one decision point.
+    \item The policy learns how to split VM memory demand across reachable MPDs.
+  \end{itemize}
+  \note{
+  Keep this concise and conceptual. Do not dive into SAC internals yet.
+  Emphasize event-driven decision making (VM arrivals), not fixed clock steps.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{2) Why RL is a good fit (temporal trends)}
+  \figorplaceholder{figs/demand_overview.pdf}{0.72\textheight}
+  \vspace{0.3em}
+  \begin{itemize}
+    \item Clear diurnal regularity means future demand is partially predictable.
+    \item Time-aware allocation can reserve headroom before expected ramps.
+    \item RL is well-suited to learning this anticipation from trace replay.
+  \end{itemize}
+  \note{
+  Make the figure the center of this slide.
+  Keep the narrative focused on temporal predictability and anticipation.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{3) Policy Design: State}
+  \textbf{State table (cleaned-up design)}
+  \scriptsize
+  \begin{tabular}{p{0.30\linewidth}p{0.34\linewidth}p{0.30\linewidth}}
+    \toprule
+    \textbf{Signal} & \textbf{Current implementation} & \textbf{Next iteration} \\
+    \midrule
+    Per-accessible-MPD load & Normalized current loads & Add short-horizon deltas/trends \\
+    Topology connectivity & Binary reachable-MPD mask & Keep (hard validity constraint) \\
+    Request context & Normalized VM memory request & Keep and add request-type bucket \\
+    Global pressure & Current peak normalized MPD load & Keep and add rolling peak estimate \\
+    Temporal context & Hour-of-day $\sin/\cos$ & Keep and add day-of-week encoding \\
+    \bottomrule
+  \end{tabular}
+  \normalsize
+  \vspace{0.3em}
+  \textbf{Difference vs current implementation in \texttt{train.py}/env}
+  \begin{itemize}
+    \item Current code is mostly instantaneous.
+    \item Next iteration should add short history/trend features (e.g., load deltas)
+      to improve anticipation.
+  \end{itemize}
+  \note{
+  Be explicit that this slide is the clean conceptual design.
+  Mention current env already includes hour sin/cos + load/mask/request/peak.
+  Clarify planned extension: trend features for better temporal forecasting.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{4) Policy Design: Action}
+  \begin{itemize}
+    \item Output is a continuous vector over reachable MPDs:
+      \[
+      \mathbf{w} \in \mathbb{R}^{k},\quad w_i \ge 0,\quad \sum_i w_i=1
+      \]
+    \item Connectivity mask enforces invalid links $\rightarrow$ zero allocation.
+    \item Physical allocation:
+      \[
+      \text{alloc}_i = w_i \cdot \text{VM\_memory}
+      \]
+    \item This keeps control high-level and low-overhead: no migration action in-loop.
+  \end{itemize}
+  \vspace{0.4em}
+  \textbf{Difference vs current code}
+  \begin{itemize}
+    \item Current policy outputs unconstrained scores then applies softmax.
+    \item We keep this but emphasize explicit masked simplex interpretation.
+  \end{itemize}
+  \note{
+  Advisor may ask: "why not discrete argmin action?" Answer: continuous split is
+  expressive and fits SAC naturally.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{5) Policy Design: Reward}
+  \textbf{Primary objective: reduce required per-MPD peak capacity}
+  \[
+  \text{Savings} = 1 - \frac{m \cdot \max_j(\text{PeakLoad}_j)}{\sum_i \text{DRAM}_i}
+  \]
+  \vspace{0.4em}
+  \textbf{Training reward (clean form)}
+  \[
+  r_t = -\Delta\max_j(c_j) - \lambda \cdot \mathrm{Var}(\mathbf{c}_t)
+  \]
+  where $\mathbf{c}_t$ is MPD load vector.
+  \begin{itemize}
+    \item First term penalizes increasing the worst MPD.
+    \item Second term gives dense signal for load balancing.
+  \end{itemize}
+  \vspace{0.4em}
+  \textbf{Difference vs current \texttt{train.py} environment}
+  \begin{itemize}
+    \item Current reward is close to peak-change only.
+    \item Planned update adds variance shaping to reduce mode collapse.
+  \end{itemize}
+  \note{
+  Important bridge: "we are getting there with RL" because reward shaping can
+  close observed imbalance gap.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{6) Model Choice: Why SAC (and where PPO fits)}
+  \begin{itemize}
+    \item \textbf{Chosen primary model: SAC}
+      \begin{itemize}
+        \item Continuous action support fits allocation vector directly.
+        \item Off-policy replay improves sample efficiency on long traces.
+        \item Entropy term helps exploration and avoids brittle deterministic policy.
+      \end{itemize}
+    \item \textbf{PPO as secondary baseline}
+      \begin{itemize}
+        \item On-policy, often more stable but less sample efficient here.
+      \end{itemize}
+    \item \textbf{Practical note}
+      \begin{itemize}
+        \item Current \texttt{train.py} supports both SAC/PPO; experiments currently centered on SAC.
+      \end{itemize}
+  \end{itemize}
+  \note{
+  Keep to one sentence each for SAC/PPO tradeoff.
+  If asked: "why not model-based?" answer with engineering complexity + trace-driven setup.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{7) Results: Where RL stands now}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.68\textwidth}
+      \figorplaceholder{figs/3panel_by_cxl.pdf}{0.74\textheight}
+    \column{0.32\textwidth}
+      \textbf{Current status}
+      \begin{itemize}
+        \item RL is improving but not consistently closing greedy$\rightarrow$optimal gap.
+        \item Best gains appear in temporally structured regimes.
+      \end{itemize}
+      \vspace{0.3em}
+      \textbf{Message for this update}
+      \begin{itemize}
+        \item \textbf{We are getting there with RL.}
+        \item Next step: reward/state refinement + longer training for robust gains.
+      \end{itemize}
+  \end{columns}
+  \note{
+  Start results with the RL-centered view per advisor presentation flow.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{8) Results: Load balancing behavior (Greedy vs RL)}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.5\textwidth}
+      \figorplaceholder{figs/mhd_timeseries_greedy.png}{0.60\textheight}
+      \centering \small Greedy
+    \column{0.5\textwidth}
+      \figorplaceholder{figs/mhd_timeseries_rl.png}{0.60\textheight}
+      \centering \small RL (SAC)
+  \end{columns}
+  \vspace{0.35em}
+  \begin{block}{Takeaway}
+    RL can still over-concentrate load on a few MPDs; improving reward shaping
+    and temporal features is key to closing the remaining performance gap.
+  \end{block}
+  \note{
+  Use this slide to explain *why* RL is not yet consistently better:
+  behaviorally, it sometimes learns imbalance.
+  Keep the takeaway short and constructive.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\begin{frame}{9) Results: Topology-level trend}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.68\textwidth}
+      \figorplaceholder{figs/fc_vs_octopus.pdf}{0.74\textheight}
+    \column{0.32\textwidth}
+      \textbf{Reading this plot}
+      \begin{itemize}
+        \item Fully-connected remains an upper benchmark.
+        \item Sparse Octopus is harder due to constrained routing.
+        \item Gap widens at higher CXL fraction.
+      \end{itemize}
+      \vspace{0.4em}
+      \textbf{Takeaway}
+      \begin{itemize}
+        \item There is measurable headroom to recover via better policies.
+      \end{itemize}
+  \end{columns}
+  \note{
+  Use this as context for why the RL improvements still matter.
+  }
+\end{frame}
+
+% ----------------------------------------------------------------
+\appendix
+
+\begin{frame}{Appendix A: Diurnal trends (backup)}
+  \figorplaceholder{figs/demand_diurnal.pdf}{0.78\textheight}
+  \note{
+  Backup version of Slide 2 for deeper discussion.
+  }
+\end{frame}
+
+\begin{frame}{Appendix B: Additional temporal evidence}
+  \figorplaceholder{figs/demand_overview.pdf}{0.78\textheight}
+  \note{
+  Backup for "why temporal structure exists?" questions.
+  }
+\end{frame}
+
+\begin{frame}{Appendix C: Peak-to-mean context}
+  \figorplaceholder{figs/peak_to_mean.pdf}{0.78\textheight}
+  \note{
+  Backup for "is there enough headroom to matter economically?" questions.
+  }
+\end{frame}
+
+\begin{frame}{Appendix D: Load-balancing behavior details}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.5\textwidth}
+      \figorplaceholder{figs/mhd_timeseries_greedy.png}{0.68\textheight}
+    \column{0.5\textwidth}
+      \figorplaceholder{figs/mhd_timeseries_rl.png}{0.68\textheight}
+  \end{columns}
+  \vspace{0.2em}
+  \small Useful for discussing where RL still diverges from balanced allocation.
+  \note{
+  This is a strong diagnostic slide. Use only if advisor asks why RL underperforms
+  in some settings.
+  }
+\end{frame}
+
+\end{document}
+

@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+doc/v1/*.aux
+doc/v1/*.log
+doc/v1/*.out
+doc/v1/*.toc
+doc/v1/*.bbl
+doc/v1/*.blg
+doc/v1/*.fls
+doc/v1/*.fdb_latexmk
+doc/v1/*.synctex.gz
+context/*.txt
+traces/*
