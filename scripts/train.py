@@ -62,12 +62,12 @@ def main():
     )
     ap.add_argument(
         "--topology",
-        default="topologies/AG16x6_expander_quads_r5_sym_fixed.csv",
+        default="data/topologies/AG16x6_expander_quads_r5_sym_fixed.csv",
     )
     ap.add_argument("--total-timesteps", type=int, default=500_000)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--save-dir", default="checkpoints")
-    ap.add_argument("--log-dir", default="logs")
+    ap.add_argument("--save-dir", default="output/checkpoints")
+    ap.add_argument("--log-dir", default="output/logs")
     ap.add_argument(
         "--device",
         default="auto",

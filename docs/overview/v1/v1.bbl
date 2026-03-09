@@ -1,0 +1,57 @@
+\begin{thebibliography}{8}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Haarnoja et~al.(2018)Haarnoja, Zhou, Abbeel, and Levine]{haarnoja2018sac}
+Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine.
+\newblock Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine Learning (ICML)}, 2018.
+
+\bibitem[Hamadanian et~al.(2025)Hamadanian, Nasr-Esfahany, Schwarzkopf, Sen, and Alizadeh]{hamadanian2025lcpo}
+Pouya Hamadanian, Arash Nasr-Esfahany, Malte Schwarzkopf, Siddartha Sen, and Mohammad Alizadeh.
+\newblock Online reinforcement learning in non-stationary context-driven environments.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2302.02182}.
+\newblock Spotlight.
+
+\bibitem[Mao et~al.(2017)Mao, Netravali, and Alizadeh]{pensieve2017}
+Hongzi Mao, Ravi Netravali, and Mohammad Alizadeh.
+\newblock Neural adaptive video streaming with pensieve.
+\newblock In \emph{Proceedings of ACM SIGCOMM}, 2017.
+
+\bibitem[Mao et~al.(2019)Mao, Schwarzkopf, Venkatakrishnan, Meng, and Alizadeh]{decima2019}
+Hongzi Mao, Malte Schwarzkopf, Shaileshh~Bojja Venkatakrishnan, Zili Meng, and Mohammad Alizadeh.
+\newblock Learning scheduling algorithms for data processing clusters.
+\newblock In \emph{Proceedings of ACM SIGCOMM}, 2019.
+
+\bibitem[Raffin et~al.(2021)Raffin, Hill, Gleave, Kanervisto, Ernestus, and Dormann]{stable_baselines3}
+Antonin Raffin, Ashley Hill, Adam Gleave, Anssi Kanervisto, Maximilian Ernestus, and Noah Dormann.
+\newblock Stable-baselines3: Reliable reinforcement learning implementations.
+\newblock \emph{Journal of Machine Learning Research}, 22\penalty0 (268):\penalty0 1--8, 2021.
+\newblock URL \url{http://jmlr.org/papers/v22/20-1364.html}.
+
+\bibitem[Reidys et~al.(2025)Reidys, Zardoshti, Goiri, Irvene, Berger, Ma, Arya, Cortez, Stark, Bak, Iyigun, Novakovic, Hsu, Trueba, Pan, Bansal, Rajmohan, Huang, and Bianchini]{coach2025}
+Benjamin Reidys, Pantea Zardoshti, \'{I}\~{n}igo Goiri, Celine Irvene, Daniel~S. Berger, Haoran Ma, Kapil Arya, Eli Cortez, Taylor Stark, Eugene Bak, Mehmet Iyigun, Stanko Novakovic, Lisa Hsu, Karel Trueba, Abhisek Pan, Chetan Bansal, Saravan Rajmohan, Jian Huang, and Ricardo Bianchini.
+\newblock Coach: Exploiting temporal patterns for all-resource oversubscription in cloud platforms.
+\newblock In \emph{Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1}, ASPLOS '25, page 164–181, New York, NY, USA, 2025. Association for Computing Machinery.
+\newblock ISBN 9798400706981.
+\newblock \doi{10.1145/3669940.3707226}.
+\newblock URL \url{https://doi.org/10.1145/3669940.3707226}.
+
+\bibitem[Schulman et~al.(2017)Schulman, Wolski, Dhariwal, Radford, and Klimov]{schulman2017ppo}
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+\newblock Proximal policy optimization algorithms.
+\newblock \emph{arXiv preprint arXiv:1707.06347}, 2017.
+
+\bibitem[Sun et~al.(2025)Sun, Reidys, Li, Chang, Snir, and Huang]{fleetio2025}
+Jinghan Sun, Benjamin Reidys, Daixuan Li, Jichuan Chang, Marc Snir, and Jian Huang.
+\newblock Fleetio: Managing multi-tenant cloud storage with multi-agent reinforcement learning.
+\newblock In \emph{Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1}, ASPLOS '25, page 478–492, New York, NY, USA, 2025. Association for Computing Machinery.
+\newblock ISBN 9798400706981.
+\newblock \doi{10.1145/3669940.3707229}.
+\newblock URL \url{https://doi.org/10.1145/3669940.3707229}.
+
+\end{thebibliography}

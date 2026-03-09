@@ -9,7 +9,7 @@ Usage
 -----
   python evaluate.py                          # greedy + RL on AG16x6 / AMS20
   python evaluate.py --policy greedy          # greedy only
-  python evaluate.py --policy rl --model checkpoints/octopus_sac_final
+  python evaluate.py --policy rl --model output/checkpoints/octopus_sac_final
 """
 
 import argparse
@@ -296,11 +296,11 @@ def main():
     )
     ap.add_argument(
         "--topology",
-        default="topologies/AG16x6_expander_quads_r5_sym_fixed.csv",
+        default="data/topologies/AG16x6_expander_quads_r5_sym_fixed.csv",
     )
     ap.add_argument(
         "--model",
-        default="checkpoints/octopus_sac_final",
+        default="output/checkpoints/octopus_sac_final",
         help="Path to trained SB3 model (for --policy rl)",
     )
     ap.add_argument("--n-iter", type=int, default=50)

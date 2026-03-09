@@ -53,7 +53,7 @@ class _VMUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
-def load_trace(cluster_name, trace_dir="traces"):
+def load_trace(cluster_name, trace_dir="data/traces"):
     """Load a pre-processed Azure VM trace pickle.
 
     Parameters

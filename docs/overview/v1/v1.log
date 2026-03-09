@@ -1,10 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) (preloaded format=pdflatex 2026.2.24)  26 FEB 2026 01:38
+This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) (preloaded format=pdflatex 2026.2.24)  7 MAR 2026 01:38
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
  %&-line parsing enabled.
-**/home/pm3371/gitrepos/octopus-allocation/doc/v1/v1.tex
-(/home/pm3371/gitrepos/octopus-allocation/doc/v1/v1.tex
+**/home/pm3371/gitrepos/octopus-allocation/docs/v1/v1.tex
+(/home/pm3371/gitrepos/octopus-allocation/docs/v1/v1.tex
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
 (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/base/article.cls
@@ -568,9 +568,7 @@ Package: natbib 2010/09/13 8.31b (PWD, AO)
 \bibsep=\skip78
 LaTeX Info: Redefining \cite on input line 694.
 \c@NAT@ctr=\count349
-) (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/tools/tabularx.sty
-Package: tabularx 2023/12/11 v2.12a `tabularx' package (DPC)
- (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/tools/array.sty
+) (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/tools/array.sty
 Package: array 2025/09/25 v2.6n Tabular extension package (FMi)
 \col@sep=\dimen305
 \ar@mcellbox=\box80
@@ -579,36 +577,212 @@ Package: array 2025/09/25 v2.6n Tabular extension package (FMi)
 \extratabsurround=\skip79
 \backup@length=\skip80
 \ar@cellbox=\box81
+) (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/listings/lstlang1.sty
+File: lstlang1.sty 2025/11/14 1.11b listings language file
 )
-\TX@col@width=\dimen307
-\TX@old@table=\dimen308
-\TX@old@col=\dimen309
-\TX@target=\dimen310
-\TX@delta=\dimen311
-\TX@cols=\count350
-\TX@ftn=\toks46
+\c@theorem=\count350
+\c@definition=\count351
+ (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
+File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
+\l__color_backend_stack_int=\count352
+) (./v1.aux)
+\openout1 = `v1.aux'.
+
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 44.
+LaTeX Font Info:    ... okay on input line 44.
+
+*geometry* driver: auto-detecting
+*geometry* detected driver: pdftex
+*geometry* verbose mode - [ preamble ] result:
+* driver: pdftex
+* paper: <default>
+* layout: <same size as paper>
+* layoutoffset:(h,v)=(0.0pt,0.0pt)
+* modes: 
+* h-part:(L,W,R)=(72.26999pt, 469.75502pt, 72.26999pt)
+* v-part:(T,H,B)=(72.26999pt, 650.43001pt, 72.26999pt)
+* \paperwidth=614.295pt
+* \paperheight=794.96999pt
+* \textwidth=469.75502pt
+* \textheight=650.43001pt
+* \oddsidemargin=0.0pt
+* \evensidemargin=0.0pt
+* \topmargin=-37.0pt
+* \headheight=12.0pt
+* \headsep=25.0pt
+* \topskip=11.0pt
+* \footskip=30.0pt
+* \marginparwidth=59.0pt
+* \marginparsep=10.0pt
+* \columnsep=10.0pt
+* \skip\footins=10.0pt plus 4.0pt minus 2.0pt
+* \hoffset=0.0pt
+* \voffset=0.0pt
+* \mag=1000
+* \@twocolumnfalse
+* \@twosidefalse
+* \@mparswitchfalse
+* \@reversemarginfalse
+* (1in=72.27pt=25.4mm, 1cm=28.453pt)
+
+(/home/pm3371/.TinyTeX/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
+Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
+Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 485.
+ (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/latexconfig/epstopdf-sys.cfg
+File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Live
+))
+\c@lstlisting=\count353
+Package hyperref Info: Link coloring OFF on input line 44.
+ (./v1.out) (./v1.out)
+\@outlinefile=\write4
+\openout4 = `v1.out'.
+
+LaTeX Font Info:    Trying to load font information for U+msa on input line 46.
+ (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd
+File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
+LaTeX Font Info:    Trying to load font information for U+msb on input line 46.
+ (/home/pm3371/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd
+File: umsb.fd 2013/01/14 v3.01 AMS symbols B
+) (./v1.toc)
+\tf@toc=\write5
+\openout5 = `v1.toc'.
 
-! LaTeX Error: File `pdflscape.sty' not found.
+ [1
 
-Type X to quit or <RETURN> to proceed,
-or enter new name. (Default extension: sty)
+{/home/pm3371/.TinyTeX/texmf-var/fonts/map/pdftex/updmap/pdftex.map}] [2] [3] [4] [5]
+<figs/demand_overview.pdf, id=151, 1582.31654pt x 587.18346pt>
+File: figs/demand_overview.pdf Graphic file (type pdf)
+<use figs/demand_overview.pdf>
+Package pdftex.def Info: figs/demand_overview.pdf  used on input line 356.
+(pdftex.def)             Requested size: 469.75502pt x 174.31966pt.
+<figs/demand_diurnal.pdf, id=153, 1582.18103pt x 513.69038pt>
+File: figs/demand_diurnal.pdf Graphic file (type pdf)
+<use figs/demand_diurnal.pdf>
+Package pdftex.def Info: figs/demand_diurnal.pdf  used on input line 379.
+(pdftex.def)             Requested size: 469.75502pt x 152.51712pt.
+ [6 <./figs/demand_overview.pdf>]
+<figs/peak_to_mean.pdf, id=257, 1004.20985pt x 353.74992pt>
+File: figs/peak_to_mean.pdf Graphic file (type pdf)
+<use figs/peak_to_mean.pdf>
+Package pdftex.def Info: figs/peak_to_mean.pdf  used on input line 399.
+(pdftex.def)             Requested size: 469.75502pt x 165.4798pt.
+ [7 <./figs/demand_diurnal.pdf> <./figs/peak_to_mean.pdf>] [8] [9] [10]
+Underfull \hbox (badness 10000) in paragraph at lines 683--683
+[]|\OT1/cmr/bx/n/10 Temporal Treat-
+ []
 
-Enter file name: 
-/home/pm3371/gitrepos/octopus-allocation/doc/v1/v1.tex:18: Emergency stop.
-<read *> 
-         
-l.18 \usepackage
-                {array}^^M
-*** (cannot \read from terminal in nonstop modes)
 
- 
+Underfull \hbox (badness 10000) in paragraph at lines 688--689
+[]|\OT1/cmr/m/n/10 Per-MPD band-width
+ []
+
+
+Underfull \hbox (badness 2229) in paragraph at lines 696--697
+[]|\OT1/cmr/m/n/10 Scalar (% al-locs caus-ing
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 706--707
+[]|\OT1/cmr/m/n/10 Predicted mem-ory
+ []
+
+
+Underfull \hbox (badness 3724) in paragraph at lines 709--710
+[]|\OT1/cmr/m/n/10 Server-to-MPD con-nec-
+ []
+
+
+Overfull \hbox (13.8064pt too wide) in paragraph at lines 681--716
+ [][] 
+ []
+
+[11] [12] [13] [14] [15]
+<figs/fc_vs_octopus.pdf, id=545, 722.7pt x 505.89pt>
+File: figs/fc_vs_octopus.pdf Graphic file (type pdf)
+<use figs/fc_vs_octopus.pdf>
+Package pdftex.def Info: figs/fc_vs_octopus.pdf  used on input line 1037.
+(pdftex.def)             Requested size: 399.29463pt x 279.5063pt.
+ [16]
+<figs/3panel_by_cxl.pdf, id=554, 574.01328pt x 508.75256pt>
+File: figs/3panel_by_cxl.pdf Graphic file (type pdf)
+<use figs/3panel_by_cxl.pdf>
+Package pdftex.def Info: figs/3panel_by_cxl.pdf  used on input line 1056.
+(pdftex.def)             Requested size: 469.75502pt x 416.34917pt.
+ [17 <./figs/fc_vs_octopus.pdf>]
+<figs/mhd_timeseries_greedy.png, id=627, 851.3406pt x 371.82915pt>
+File: figs/mhd_timeseries_greedy.png Graphic file (type png)
+<use figs/mhd_timeseries_greedy.png>
+Package pdftex.def Info: figs/mhd_timeseries_greedy.png  used on input line 1083.
+(pdftex.def)             Requested size: 469.75502pt x 205.17047pt.
+ [18 <./figs/3panel_by_cxl.pdf>]
+<figs/mhd_timeseries_rl.png, id=730, 794.97pt x 433.62pt>
+File: figs/mhd_timeseries_rl.png Graphic file (type png)
+<use figs/mhd_timeseries_rl.png>
+Package pdftex.def Info: figs/mhd_timeseries_rl.png  used on input line 1101.
+(pdftex.def)             Requested size: 469.75502pt x 256.23718pt.
+ [19 <./figs/mhd_timeseries_greedy.png> <./figs/mhd_timeseries_rl.png>]
+Overfull \hbox (3.33755pt too wide) in paragraph at lines 1118--1125
+[]\OT1/cmr/bx/n/10.95 Reward sig-nal. \OT1/cmr/m/n/10.95 The per-step re-ward pe-nalises in-creases in the global peak load ($\OMS/cmsy/m/n/10.95 ^^@\OT1/cmr/m/n/10.95 ^^A [][] \OML/cmm/m/it/10.95 c[]$\OT1/cmr/m/n/10.95 ),
+ []
+
+
+Overfull \hbox (180.4421pt too wide) in paragraph at lines 1181--1184
+[]\OT1/cmr/m/n/10.95 Both trained check-points ex-ist (\OT1/cmtt/m/n/10.95 output/checkpoints/best[]model.zip \OT1/cmr/m/n/10.95 for the slow run; \OT1/cmtt/m/n/10.95 output/checkpoints[]fast/best[]model.zip
+ []
+
+
+Overfull \hbox (184.3261pt too wide) in paragraph at lines 1186--1190
+[]\OT1/cmr/m/n/10.95 Run \OT1/cmtt/m/n/10.95 evaluate.py --policy greedy rl --model output/checkpoints/best[]model \OT1/cmr/m/n/10.95 and \OT1/cmtt/m/n/10.95 output/checkpoints[]fast/best[]model
+ []
+
+[20]
+Overfull \hbox (25.9832pt too wide) in paragraph at lines 1215--1220
+[]\OT1/cmr/bx/n/10.95 Greedy and op-ti-mal base-lines at 96 hosts. \OT1/cmr/m/n/10.95 Run \OT1/cmtt/m/n/10.95 evaluate.py --policy greedy --topology
+ []
+
+
+Overfull \hbox (70.64722pt too wide) in paragraph at lines 1239--1243
+[]\OT1/cmr/bx/n/10.95 Close the greedy-to-optimal gap. \OT1/cmr/m/n/10.95 Run \OT1/cmtt/m/n/10.95 greedy[]pooling[]simulation \OT1/cmr/m/n/10.95 and \OT1/cmtt/m/n/10.95 optimal[]pooling[]simulation
+ []
+
+[21] (./v1.bbl) [22] (./v1.aux)
+ ***********
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
+ ***********
+Package rerunfilecheck Info: File `v1.out' has not changed.
+(rerunfilecheck)             Checksum: 5F856F4D819FE4BED83575168D91C38A;2527.
+ ) 
 Here is how much of TeX's memory you used:
- 23736 strings out of 469514
- 435660 string characters out of 5469758
- 834433 words of memory out of 5000000
- 52048 multiletter control sequences out of 15000+600000
- 628021 words of font info for 41 fonts, out of 8000000 for 9000
+ 24823 strings out of 469514
+ 455474 string characters out of 5469758
+ 1049566 words of memory out of 5000000
+ 52893 multiletter control sequences out of 15000+600000
+ 643286 words of font info for 98 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 84i,0n,94p,514b,266s stack positions out of 10000i,1000n,20000p,200000b,200000s
-/home/pm3371/gitrepos/octopus-allocation/doc/v1/v1.tex:18:  ==> Fatal error occurred, no output PDF file produced!
+ 84i,16n,94p,588b,857s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ </home/pm3371/.TinyTeX/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1095.600pk></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx8.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbxti10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmib10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></home/pm3371/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
+Output written on v1.pdf (22 pages, 1412116 bytes).
+PDF statistics:
+ 927 PDF objects out of 1000 (max. 8388607)
+ 482 compressed objects within 5 object streams
+ 171 named destinations out of 1000 (max. 500000)
+ 168 words of extra memory for PDF output out of 10000 (max. 10000000)
+

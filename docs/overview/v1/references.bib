@@ -1,0 +1,108 @@
+@article{stable_baselines3,
+  title   = {Stable-Baselines3: Reliable Reinforcement Learning Implementations},
+  author  = {Raffin, Antonin and Hill, Ashley and Gleave, Adam and Kanervisto, Anssi
+             and Ernestus, Maximilian and Dormann, Noah},
+  journal = {Journal of Machine Learning Research},
+  volume  = {22},
+  number  = {268},
+  pages   = {1--8},
+  year    = {2021},
+  url     = {http://jmlr.org/papers/v22/20-1364.html},
+}
+
+@inproceedings{hamadanian2025lcpo,
+  title     = {Online Reinforcement Learning in Non-Stationary Context-Driven Environments},
+  author    = {Hamadanian, Pouya and Nasr-Esfahany, Arash and Schwarzkopf, Malte
+               and Sen, Siddartha and Alizadeh, Mohammad},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2025},
+  note      = {Spotlight},
+  eprint    = {2302.02182},
+  archivePrefix = {arXiv},
+  url       = {https://arxiv.org/abs/2302.02182},
+}
+
+@inproceedings{haarnoja2018sac,
+  title     = {Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement
+               Learning with a Stochastic Actor},
+  author    = {Haarnoja, Tuomas and Zhou, Aurick and Abbeel, Pieter and Levine, Sergey},
+  booktitle = {Proceedings of the 35th International Conference on Machine Learning (ICML)},
+  year      = {2018},
+}
+
+@article{schulman2017ppo,
+  title   = {Proximal Policy Optimization Algorithms},
+  author  = {Schulman, John and Wolski, Filip and Dhariwal, Prafulla and
+             Radford, Alec and Klimov, Oleg},
+  journal = {arXiv preprint arXiv:1707.06347},
+  year    = {2017},
+}
+
+@inproceedings{fleetio2025,
+author = {Sun, Jinghan and Reidys, Benjamin and Li, Daixuan and Chang, Jichuan and Snir, Marc and Huang, Jian},
+title = {FleetIO: Managing Multi-Tenant Cloud Storage with Multi-Agent Reinforcement Learning},
+year = {2025},
+isbn = {9798400706981},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3669940.3707229},
+doi = {10.1145/3669940.3707229},
+abstract = {Cloud platforms have been virtualizing storage devices like flash-based solid-state drives (SSDs) to make effective use of storage resources. They enable either software-isolated instance or hardware-isolated instance for facilitating the storage sharing between multi-tenant applications. However, for decades, they have to combat the fundamental tussle between the performance isolation and resource utilization. They suffer from either long tail latency caused by weak isolation or low storage utilization caused by strong isolation.In this paper, we present FleetIO, a learning-based storage virtualization framework that employs reinforcement learning (RL) for managing virtualized SSDs. FleetIO explores the unique features of RL to handle the dynamic changes of application workloads and storage states, and integrates the storage scheduling into the RL decision-making process. It achieves both performance isolation and improved storage utilization by enabling dynamic fine-grained storage harvesting across collocated application instances, while minimizing its negative impact on their service-level objectives (SLOs). FleetIO clusters workloads into different types (e.g., latency-sensitive and bandwidth-intensive) based on the collected I/O traces at runtime, and fine-tunes the RL reward functions for each type of workloads. We implement FleetIO on a real programmable SSD board and evaluate it with diverse cloud applications. We show that FleetIO improves the overall storage utilization of the shared SSD by up to 1.4\texttimes{}, and decreases the tail latency of I/O requests by 1.5\texttimes{} on average, compared to the state-of-the-art storage sharing approaches.},
+booktitle = {Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1},
+pages = {478–492},
+numpages = {15},
+keywords = {cloud storage, reinforcement learning, storage virtualization},
+location = {Rotterdam, Netherlands},
+series = {ASPLOS '25}
+}
+
+@inproceedings{pensieve2017,
+  title     = {Neural Adaptive Video Streaming with Pensieve},
+  author    = {Mao, Hongzi and Netravali, Ravi and Alizadeh, Mohammad},
+  booktitle = {Proceedings of ACM SIGCOMM},
+  year      = {2017},
+}
+
+@inproceedings{decima2019,
+  title     = {Learning Scheduling Algorithms for Data Processing Clusters},
+  author    = {Mao, Hongzi and Schwarzkopf, Malte and Venkatakrishnan,
+               Shaileshh Bojja and Meng, Zili and Alizadeh, Mohammad},
+  booktitle = {Proceedings of ACM SIGCOMM},
+  year      = {2019},
+}
+
+@inproceedings{coach2025,
+author = {Reidys, Benjamin and Zardoshti, Pantea and Goiri, \'{I}\~{n}igo and Irvene, Celine and Berger, Daniel S. and Ma, Haoran and Arya, Kapil and Cortez, Eli and Stark, Taylor and Bak, Eugene and Iyigun, Mehmet and Novakovic, Stanko and Hsu, Lisa and Trueba, Karel and Pan, Abhisek and Bansal, Chetan and Rajmohan, Saravan and Huang, Jian and Bianchini, Ricardo},
+title = {Coach: Exploiting Temporal Patterns for All-Resource Oversubscription in Cloud Platforms},
+year = {2025},
+isbn = {9798400706981},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3669940.3707226},
+doi = {10.1145/3669940.3707226},
+abstract = {Cloud platforms remain underutilized despite multiple proposals to improve their utilization (e.g., disaggregation, harvesting, and oversubscription). Our characterization of the resource utilization of virtual machines (VMs) in Azure reveals that, while CPU is the main underutilized resource, we need to provide a solution to manage all resources holistically. We also observe that many VMs exhibit complementary temporal patterns, which can be leveraged to improve the oversubscription of underutilized resources.Based on these insights, we propose Coach: a system that exploits temporal patterns for all-resource oversubscription in cloud platforms. Coach uses long-term predictions and an efficient VM scheduling policy to exploit temporally complementary patterns. We introduce a new general-purpose VM type, called CoachVM, where we partition each resource allocation into a guaranteed and an oversubscribed portion. Coach monitors the oversubscribed resources to detect contention and mitigate any potential performance degradation. We focus on memory management, which is particularly challenging due to memory's sensitivity to contention and the overhead required to reassign it between CoachVMs. Our experiments show that Coach enables platforms to host up to ~26\% more VMs with minimal performance degradation.},
+booktitle = {Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1},
+pages = {164–181},
+numpages = {18},
+keywords = {cloud computing, memory oversubscription, resource management, temporal patterns},
+location = {Rotterdam, Netherlands},
+series = {ASPLOS '25}
+}
+
+@inproceedings{pond2023,
+author = {Li, Huaicheng and Berger, Daniel S. and Hsu, Lisa and Ernst, Daniel and Zardoshti, Pantea and Novakovic, Stanko and Shah, Monish and Rajadnya, Samir and Lee, Scott and Agarwal, Ishwar and Hill, Mark D. and Fontoura, Marcus and Bianchini, Ricardo},
+title = {Pond: CXL-Based Memory Pooling Systems for Cloud Platforms},
+year = {2023},
+isbn = {9781450399166},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3575693.3578835},
+doi = {10.1145/3575693.3578835},
+abstract = {Public cloud providers seek to meet stringent performance requirements and low hardware cost. A key driver of performance and cost is main memory. Memory pooling promises to improve DRAM utilization and thereby reduce costs. However, pooling is challenging under cloud performance requirements. This paper proposes Pond, the first memory pooling system that both meets cloud performance goals and significantly reduces DRAM cost. Pond builds on the Compute Express Link (CXL) standard for load/store access to pool memory and two key insights. First, our analysis of cloud production traces shows that pooling across 8-16 sockets is enough to achieve most of the benefits. This enables a small-pool design with low access latency. Second, it is possible to create machine learning models that can accurately predict how much local and pool memory to allocate to a virtual machine (VM) to resemble same-NUMA-node memory performance. Our evaluation with 158 workloads shows that Pond reduces DRAM costs by 7\% with performance within 1-5\% of same-NUMA-node VM allocations.},
+booktitle = {Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2},
+pages = {574–587},
+numpages = {14},
+keywords = {CXL, Compute Express Link, cloud computing, datacenter, memory disaggregation, memory pooling},
+location = {Vancouver, BC, Canada},
+series = {ASPLOS 2023}
+}

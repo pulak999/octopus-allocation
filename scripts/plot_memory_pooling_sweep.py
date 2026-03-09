@@ -543,7 +543,7 @@ def _style():
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--trace", default="LON23PrdApp01-troundgrt5m.sqlite")
-    ap.add_argument("--outdir", default="plots/memory_pooling")
+    ap.add_argument("--outdir", default="output/plots/memory_pooling")
     ap.add_argument(
         "--pod-sizes",
         nargs="+",
@@ -564,7 +564,7 @@ def main() -> None:
     ap.add_argument(
         "--rl-model",
         nargs="+",
-        default=["checkpoints/best_model.zip", "checkpoints/octopus_sac_final.zip", "checkpoints/octopus_sac_final"],
+        default=["output/checkpoints/best_model.zip", "output/checkpoints/octopus_sac_final.zip", "output/checkpoints/octopus_sac_final"],
         help="SB3 SAC model path(s). First existing one is used.",
     )
     ap.add_argument("--rl-max-degree", type=int, default=8, help="Max degree the RL policy was trained with (e.g., 8)")

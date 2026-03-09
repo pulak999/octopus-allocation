@@ -1,0 +1,104 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\providecommand \oddpage@label [2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Problem Formulation}{2}{section.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Octopus bipartite graph: servers (left) connect to MPDs (right) via sparse edges. Each edge denotes a physical CXL link over which a server can allocate memory from that MPD.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:bipartite}{{1}{2}{Octopus bipartite graph: servers (left) connect to MPDs (right) via sparse edges. Each edge denotes a physical CXL link over which a server can allocate memory from that MPD}{figure.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{Simulation model.}{3}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Formal objective.}{3}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Cost model interpretation.}{3}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{The greedy--optimal gap.}{3}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Numerical target.}{4}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Why is RL a Good Solution?}{4}{section.2}\protected@file@percent }
+\citation{pensieve2017}
+\citation{decima2019}
+\citation{fleetio2025}
+\citation{coach2025}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Data Plotting}{5}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:data_plotting}{{2.1}{5}{Data Plotting}{subsection.2.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Per-server (grey) and cluster-aggregate (blue) memory demand across ten Azure datacenters. Red dashed: cluster peak. Green dotted: cluster mean. $y$-axis: demand as a percentage of total physical DRAM installed in the cluster. Traces span $\approx $14 days at 5-minute resolution. }}{6}{figure.2}\protected@file@percent }
+\newlabel{fig:demand_overview}{{2}{6}{Per-server (grey) and cluster-aggregate (blue) memory demand across ten Azure datacenters. Red dashed: cluster peak. Green dotted: cluster mean. $y$-axis: demand as a percentage of total physical DRAM installed in the cluster. Traces span $\approx $14 days at 5-minute resolution}{figure.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Diurnal memory demand profile for each datacenter. Blue line: daily mean. Blue band: $\pm $1 standard deviation. Grey lines: individual days. $x$-axis: hour of day (UTC). }}{7}{figure.3}\protected@file@percent }
+\newlabel{fig:demand_diurnal}{{3}{7}{Diurnal memory demand profile for each datacenter. Blue line: daily mean. Blue band: $\pm $1 standard deviation. Grey lines: individual days. $x$-axis: hour of day (UTC)}{figure.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Left: peak-to-mean demand ratio per datacenter (red bars $> 1.4$). Right: absolute peak and mean demand as a fraction of total physical DRAM. The gap between peak and mean (left panel) is the capacity that pooling recovers. }}{7}{figure.4}\protected@file@percent }
+\newlabel{fig:peak_to_mean}{{4}{7}{Left: peak-to-mean demand ratio per datacenter (red bars $> 1.4$). Right: absolute peak and mean demand as a fraction of total physical DRAM. The gap between peak and mean (left panel) is the capacity that pooling recovers}{figure.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Assuming RL is \emph  {Not} the Solution: Baseline Comparisons}{7}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:baselines}{{2.2}{7}{Assuming RL is \emph {Not} the Solution: Baseline Comparisons}{subsection.2.2}{}}
+\@writefile{loa}{\contentsline {algocf}{\numberline {1}{\ignorespaces Greedy allocation for a single VM arrival.}}{8}{algocf.1}\protected@file@percent }
+\newlabel{alg:greedy}{{1}{8}{Greedy Baseline}{algocf.1}{}}
+\newlabel{eq:opt}{{1}{8}{Optimal Baseline}{equation.1}{}}
+\@writefile{loa}{\contentsline {algocf}{\numberline {2}{\ignorespaces Optimal allocation via binary search on peak load.}}{9}{algocf.2}\protected@file@percent }
+\newlabel{alg:optimal}{{2}{9}{Optimal Baseline}{algocf.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Error signal.}{9}{section*.22}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{PID signal.}{9}{section*.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Allocation rule.}{9}{section*.24}\protected@file@percent }
+\@writefile{loa}{\contentsline {algocf}{\numberline {3}{\ignorespaces PID allocation for a single VM arrival.}}{10}{algocf.3}\protected@file@percent }
+\newlabel{alg:pid}{{3}{10}{Allocation rule}{algocf.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Role of the baseline.}{10}{section*.25}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Building the RL Policy and Environment}{10}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}States}{10}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:states}{{3.1}{10}{States}{subsection.3.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces v0 observation vector ($\texttt  {OctopusMemPoolEnv.\_get\_obs}$). All load values are normalised by total pod DRAM $D_{\text  {pod}}$. For the \texttt  {AG16x6} topology ($d_{\max } = 8$), the observation has 20 dimensions.}}{11}{table.1}\protected@file@percent }
+\newlabel{tab:states_v0}{{1}{11}{v0 observation vector ($\texttt {OctopusMemPoolEnv.\_get\_obs}$). All load values are normalised by total pod DRAM $D_{\text {pod}}$. For the \texttt {AG16x6} topology ($d_{\max } = 8$), the observation has 20 dimensions}{table.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{11}{section*.27}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces v1 state space. $v_t$: current value; $\Delta _{1h}$, $\Delta _{2h}$: deltas from 1 and 2 hours prior. \texttt  {conn\_mask} doubles as the action validity mask.}}{12}{table.2}\protected@file@percent }
+\newlabel{tab:states}{{2}{12}{v1 state space. $v_t$: current value; $\Delta _{1h}$, $\Delta _{2h}$: deltas from 1 and 2 hours prior. \texttt {conn\_mask} doubles as the action validity mask}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Actions}{12}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:actions}{{3.2}{12}{Actions}{subsection.3.2}{}}
+\newlabel{eq:action}{{2}{12}{Actions}{equation.2}{}}
+\newlabel{eq:nonneg}{{3}{12}{Actions}{equation.3}{}}
+\newlabel{eq:sum}{{4}{12}{Actions}{equation.4}{}}
+\newlabel{eq:mask}{{5}{12}{Actions}{equation.5}{}}
+\newlabel{eq:alloc}{{6}{12}{Actions}{equation.6}{}}
+\citation{fleetio2025}
+\citation{haarnoja2018sac}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Reward}{13}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:reward}{{3.3}{13}{Reward}{subsection.3.3}{}}
+\newlabel{eq:reward_a}{{7}{13}{Option A: Fully Immediate, Smooth}{equation.7}{}}
+\newlabel{eq:reward_b}{{8}{13}{Option B: Immediate + Delayed}{equation.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Model}{13}{subsection.3.4}\protected@file@percent }
+\newlabel{sec:model}{{3.4}{13}{Model}{subsection.3.4}{}}
+\citation{schulman2017ppo}
+\citation{hamadanian2025lcpo}
+\citation{stable_baselines3}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Training and Deployment}{14}{subsection.3.5}\protected@file@percent }
+\newlabel{sec:training}{{3.5}{14}{Training and Deployment}{subsection.3.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Comparison of slow and fast SAC training configurations. Both train for 1\,M environment steps on AMS20, evaluated on LON23. The fast run uses \texttt  {train\_freq=16}: one gradient step per 16 environment steps, yielding $\sim $16$\times $ fewer updates. The fast run achieves a slightly better final eval reward, suggesting the slow run may be overfitting.}}{15}{table.3}\protected@file@percent }
+\newlabel{tab:training_configs}{{3}{15}{Comparison of slow and fast SAC training configurations. Both train for 1\,M environment steps on AMS20, evaluated on LON23. The fast run uses \texttt {train\_freq=16}: one gradient step per 16 environment steps, yielding $\sim $16$\times $ fewer updates. The fast run achieves a slightly better final eval reward, suggesting the slow run may be overfitting}{table.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Simulation Results}{15}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}v0 Simulation Results}{15}{subsection.4.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Pooling savings for regular Octopus topology (X=5, N=4, $\lambda =1$): 16 hosts, 20 MPDs, 50\% VM memory in CXL\spacefactor \@m {}. Results from Yuhong's slides (Feb 2026). Greedy simulation pending on AMS20 trace; \textcolor {red}{TODO: fill once run completes}.}}{16}{table.4}\protected@file@percent }
+\newlabel{tab:greedy_vs_opt}{{4}{16}{Pooling savings for regular Octopus topology (X=5, N=4, $\lambda =1$): 16 hosts, 20 MPDs, 50\% VM memory in CXL\@. Results from Yuhong's slides (Feb 2026). Greedy simulation pending on AMS20 trace; \red {TODO: fill once run completes}}{table.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Greedy pooling savings on the AMS20 trace (50 random pod mappings). Savings metric: $1 - \text  {peak CXL}/\text  {total DRAM}$.}}{16}{table.5}\protected@file@percent }
+\newlabel{tab:random96}{{5}{16}{Greedy pooling savings on the AMS20 trace (50 random pod mappings). Savings metric: $1 - \text {peak CXL}/\text {total DRAM}$}{table.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Pooling savings (\%) vs.\ pod size for three CXL fractions. Solid lines: fully-connected topology. Dashed lines: regular Octopus ($N{=}4$, greedy allocation). LON23 trace, 5 random pod mappings per point. Higher values indicate less CXL capacity required relative to total pod DRAM\spacefactor \@m {}. }}{17}{figure.5}\protected@file@percent }
+\newlabel{fig:fc_vs_octopus}{{5}{17}{Pooling savings (\%) vs.\ pod size for three CXL fractions. Solid lines: fully-connected topology. Dashed lines: regular Octopus ($N{=}4$, greedy allocation). LON23 trace, 5 random pod mappings per point. Higher values indicate less CXL capacity required relative to total pod DRAM\@}{figure.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Per-CXL-fraction panels: fully-connected (solid, squares) vs.\ Octopus greedy (dashed, circles). LON23 trace, 5 random pod mappings. }}{18}{figure.6}\protected@file@percent }
+\newlabel{fig:3panel}{{6}{18}{Per-CXL-fraction panels: fully-connected (solid, squares) vs.\^^MOctopus greedy (dashed, circles). LON23 trace, 5 random pod mappings}{figure.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Greedy (Figure~\ref {fig:ts_greedy}).}{18}{section*.39}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Per-MHD memory usage over time under the greedy allocation policy. Octopus topology ($N{=}4$), 50\% CXL, pod size 16, LON23 trace. Top-12 MHDs by peak load are shown. }}{19}{figure.7}\protected@file@percent }
+\newlabel{fig:ts_greedy}{{7}{19}{Per-MHD memory usage over time under the greedy allocation policy. Octopus topology ($N{=}4$), 50\% CXL, pod size 16, LON23 trace. Top-12 MHDs by peak load are shown}{figure.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{RL --- SAC, 1M timesteps (Figure~\ref {fig:ts_rl}).}{19}{section*.40}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Per-MHD memory usage over time under the RL (SAC) allocation policy. Same topology and trace as Figure~\ref {fig:ts_greedy}. The pronounced load imbalance---max/min ratio $> 20\times $---shows the agent has failed to learn balanced allocation. }}{19}{figure.8}\protected@file@percent }
+\newlabel{fig:ts_rl}{{8}{19}{Per-MHD memory usage over time under the RL (SAC) allocation policy. Same topology and trace as Figure~\ref {fig:ts_greedy}. The pronounced load imbalance---max/min ratio $> 20\times $---shows the agent has failed to learn balanced allocation}{figure.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Greedy pooling savings as a function of random link-failure rate (50 iterations each). Savings degrade gracefully up to $\sim $5\% failures, then drop sharply at 10\% (some pods become infeasible, yielding negative savings).}}{20}{table.6}\protected@file@percent }
+\newlabel{tab:failures}{{6}{20}{Greedy pooling savings as a function of random link-failure rate (50 iterations each). Savings degrade gracefully up to $\sim $5\% failures, then drop sharply at 10\% (some pods become infeasible, yielding negative savings)}{table.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Slow vs.\ Fast Model Comparison}{20}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:slow_vs_fast}{{4.2}{20}{Slow vs.\ Fast Model Comparison}{subsection.4.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Scaling to 96-Host Pods}{21}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:96hosts}{{4.3}{21}{Scaling to 96-Host Pods}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Next Steps: How to Verify the Results}{21}{section.5}\protected@file@percent }
+\newlabel{sec:next_steps}{{5}{21}{Next Steps: How to Verify the Results}{section.5}{}}
+\bibstyle{plainnat}
+\bibdata{references}
+\bibcite{haarnoja2018sac}{{1}{2018}{{Haarnoja et~al.}}{{Haarnoja, Zhou, Abbeel, and Levine}}}
+\bibcite{hamadanian2025lcpo}{{2}{2025}{{Hamadanian et~al.}}{{Hamadanian, Nasr-Esfahany, Schwarzkopf, Sen, and Alizadeh}}}
+\bibcite{pensieve2017}{{3}{2017}{{Mao et~al.}}{{Mao, Netravali, and Alizadeh}}}
+\bibcite{decima2019}{{4}{2019}{{Mao et~al.}}{{Mao, Schwarzkopf, Venkatakrishnan, Meng, and Alizadeh}}}
+\bibcite{stable_baselines3}{{5}{2021}{{Raffin et~al.}}{{Raffin, Hill, Gleave, Kanervisto, Ernestus, and Dormann}}}
+\bibcite{coach2025}{{6}{2025}{{Reidys et~al.}}{{Reidys, Zardoshti, Goiri, Irvene, Berger, Ma, Arya, Cortez, Stark, Bak, Iyigun, Novakovic, Hsu, Trueba, Pan, Bansal, Rajmohan, Huang, and Bianchini}}}
+\bibcite{schulman2017ppo}{{7}{2017}{{Schulman et~al.}}{{Schulman, Wolski, Dhariwal, Radford, and Klimov}}}
+\bibcite{fleetio2025}{{8}{2025}{{Sun et~al.}}{{Sun, Reidys, Li, Chang, Snir, and Huang}}}
+\gdef \@abspage@last{22}

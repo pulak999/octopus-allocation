@@ -44,7 +44,7 @@ import matplotlib.dates as mdates
 from matplotlib.backends.backend_pdf import PdfPages
 
 # ── Config ───────────────────────────────────────────────────────────────────
-TRACE_DIR = "traces"
+TRACE_DIR = "data/traces"
 FIG_DIR   = "doc/v1/figs"
 MEM_IDX   = 1          # index into VM.rss / machine_sz for memory (GB)
 TICK_MIN  = 5          # trace resolution in minutes

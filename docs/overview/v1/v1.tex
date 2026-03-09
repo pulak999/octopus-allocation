@@ -10,11 +10,9 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta, positioning, shapes.geometric, calc, fit, backgrounds}
 \usepackage{listings}
-\usepackage{algorithm2e}
+\usepackage[ruled,linesnumbered]{algorithm2e}
 \usepackage{hyperref}
 \usepackage[numbers]{natbib}
-\usepackage{tabularx}
-\usepackage{pdflscape}
 \usepackage{array}
 
 % listings style
@@ -65,6 +63,15 @@ The \textbf{Octopus} architecture targets cost-effective CXL deployments using
 Each MPD connects to several servers, and each server connects to several MPDs,
 forming a \emph{sparse bipartite graph} between hosts and memory devices
 (Figure~\ref{fig:bipartite}).
+
+In the current Octopus topology, each host is connected to exactly 8 MPDs.
+That fixed degree keeps cabling and port count manageable while still giving
+each server enough reach into the pool: a host can spread a VM's allocation
+across up to 8 devices, and demand from different hosts is mixed on shared MPDs,
+enabling statistical multiplexing.  The sparsity (8 links per host rather than
+a link to every MPD) is what makes the allocation problem non-trivial---the
+graph's \emph{expansion} (defined below) limits how well local demand spikes
+can be absorbed by the rest of the pool.
 
 \begin{figure}[H]
 \centering
@@ -294,9 +301,9 @@ patterns and long-horizon consequences without explicit modelling.
 
 Learning-based resource management has a strong track record in systems:
 \begin{itemize}
-    \item \textbf{Pensieve} (SIGCOMM '17): RL for adaptive bitrate streaming.
-    \item \textbf{Decima} (SIGCOMM '19): RL for scheduling in Spark workloads.
-    \item \textbf{FleetIO} (ASPLOS '25): RL for SSD capacity allocation across
+    \item \textbf{Pensieve} \cite{pensieve2017} (SIGCOMM '17): RL for adaptive bitrate streaming.
+    \item \textbf{Decima} \cite{decima2019} (SIGCOMM '19): RL for scheduling in Spark workloads.
+    \item \textbf{FleetIO} \cite{fleetio2025} (ASPLOS '25): RL for SSD capacity allocation across
           servers---arguably the closest prior work to our setting.  FleetIO
           trains a decentralised RL agent (one per virtual SSD) that
           learns allocation directly from telemetry, without an explicit
@@ -305,7 +312,7 @@ Learning-based resource management has a strong track record in systems:
           setting.
 \end{itemize}
 
-Additionally, \textbf{Coach} (ASPLOS '25) demonstrates that VM memory
+Additionally, \textbf{Coach} \cite{coach2025} (ASPLOS '25) demonstrates that VM memory
 utilisation follows predictable diurnal patterns---a regularity that an RL
 agent can exploit to anticipate future demand and make proactive allocation
 decisions.
@@ -404,8 +411,8 @@ peaks.
 \label{sec:baselines}
 % ----------------------------------------------------------------------
 
-Before committing to an RL approach we evaluate two analytical baselines---a
-practical heuristic and an exact offline optimum---to bound the space of
+Before committing to an RL approach we evaluate three analytical baselines---a
+practical heuristic (Greedy), an exact offline optimum (Optimal), and a classical feedback controller (PID)---to bound the space of
 achievable pooling savings.
 
 \subsubsection*{Greedy Baseline}
@@ -414,46 +421,32 @@ The greedy policy allocates each new VM's CXL memory from whichever
 accessible MPD currently has the \emph{lowest} total load, splitting the
 allocation evenly across tied MPDs when necessary.  No migration is ever
 performed: once memory is allocated to an MPD it stays there until the VM
-terminates.
-
-Algorithm~\ref{alg:greedy} gives the per-VM allocation step.
+terminates. Algorithm~\ref{alg:greedy} gives the per-VM allocation step.
 
 \begin{algorithm}[H]
 \SetAlgoLined
-\KwIn{Request $x$ GB; list of accessible MPDs $\mathcal{N}$;
-      current load vector $\mathbf{c} \in \mathbb{R}^m$}
+\DontPrintSemicolon
+\caption{Greedy allocation for a single VM arrival.}
+\label{alg:greedy}
+\KwIn{Request $x$ GB; accessible MPD set $\mathcal{N}$; current load vector $\mathbf{c} \in \mathbb{R}^m$}
 \KwOut{Allocation vector $\mathbf{a}$}
+\BlankLine
 $\mathbf{a} \leftarrow \mathbf{0}$\;
 \While{$x > 0$}{
-    $j^* \leftarrow \arg\min_{j \in \mathcal{N}} c_j$
-    \quad (min-load MPD)\;
-    $S \leftarrow \{j \in \mathcal{N} : c_j = c_{j^*}\}$
-    \quad (all tied MPDs)\;
-    $j' \leftarrow \arg\min_{j \in \mathcal{N},\; c_j > c_{j^*}} c_j$
-    \quad (next-level MPD, or $\infty$)\;
-    $\delta \leftarrow \min\!\left(x,\; |S|\cdot(c_{j'} - c_{j^*})\right)$\;
+    $j^* \leftarrow \arg\min_{j \in \mathcal{N}} c_j$\;
+    \tcp{min-load MPD}
+    $S \leftarrow \{j \in \mathcal{N} : c_j = c_{j^*}\}$\;
+    \tcp{all tied MPDs}
+    $j' \leftarrow \arg\min_{j \in \mathcal{N},\; c_j > c_{j^*}} c_j$\;
+    \tcp{next-level load, or $\infty$ if none}
+    $\delta \leftarrow \min\bigl(x,\; |S| \cdot (c_{j'} - c_{j^*})\bigr)$\;
     \ForEach{$j \in S$}{
-        $a_j \leftarrow a_j + \delta / |S|$\;
-        $c_j \leftarrow c_j + \delta / |S|$\;
+        $a_j \leftarrow a_j + \delta / |S|$; \quad $c_j \leftarrow c_j + \delta / |S|$\;
     }
     $x \leftarrow x - \delta$\;
 }
 \Return $\mathbf{a}$\;
-\caption{Greedy allocation for a single VM arrival.}
-\label{alg:greedy}
 \end{algorithm}
-
-The corresponding Python implementation in the notebook is:
-
-\begin{lstlisting}[caption={Python implementation of greedy allocation.}]
-def greedy_alloc(cxl_mem, mhd_list, cur_cxl_mem_vec):
-    alloc_arr = np.zeros((len(cur_cxl_mem_vec),))
-    cur_cxl_mem_vec = np.maximum(cur_cxl_mem_vec, np.zeros(...))
-    while cxl_mem > 0:
-        min_mhd = min(mhd_list, key=lambda j: cur_cxl_mem_vec[j])
-        # ... fill to next level, split across tied MPDs ...
-    return alloc_arr
-\end{lstlisting}
 
 \subsubsection*{Optimal Baseline}
 
@@ -475,20 +468,33 @@ to adjacency constraints:
 where $b_i$ is the total CXL demand of server $i$ at the current tick.
 This is a minimax flow problem and is solved exactly via a
 \textbf{binary search + max-flow} (Dinic's algorithm) decomposition in
-$O(T \cdot n \cdot m \cdot (n + m)^{0.5})$ time:
+$O(T \cdot n \cdot m \cdot (n + m)^{0.5})$ time; Algorithm~\ref{alg:optimal}
+gives the high-level procedure.
 
-\begin{lstlisting}[caption={Optimal allocation via binary search on peak load.}]
-def find_optimal(node_cxl_arr, M):
-    # Binary search over feasible peak cap `t`:
-    #   feasible(t) iff max-flow from src->hosts->MPDs->sink >= total demand
-    #   (each host->MPD edge has capacity inf; each MPD->sink has capacity t)
-    lo, hi = lower_bound(node_cxl_arr, M), sum(node_cxl_arr)
-    for _ in range(30):          # 30 iterations -> 1e-9 relative precision
-        mid = 0.5 * (lo + hi)
-        if feasible(mid): hi = mid
-        else:             lo = mid
-    return hi                    # optimal peak per-MHD
-\end{lstlisting}
+\begin{algorithm}[H]
+\SetAlgoLined
+\DontPrintSemicolon
+\caption{Optimal allocation via binary search on peak load.}
+\label{alg:optimal}
+\KwIn{Per-server demands $\mathbf{b} \in \mathbb{R}^n$; adjacency matrix $M \in \{0,1\}^{n \times m}$}
+\KwOut{Minimum peak per-MPD load $t^*$ achievable by a feasible allocation}
+\BlankLine
+$t_{\mathrm{lo}} \leftarrow \text{lower\_bound}(\mathbf{b}, M)$\;
+\tcp{e.g.\ max of row-sums divided by degree}
+$t_{\mathrm{hi}} \leftarrow \sum_{i=1}^{n} b_i$\;
+\tcp{trivial upper bound}
+\For{$k \leftarrow 1$ \KwTo $30$}{
+    \tcp{$\approx 10^{-9}$ relative precision}
+    $t \leftarrow (t_{\mathrm{lo}} + t_{\mathrm{hi}})/2$\;
+    \eIf{$\text{feasible}(t; \mathbf{b}, M)$}{
+        $t_{\mathrm{hi}} \leftarrow t$\;
+    }{
+        $t_{\mathrm{lo}} \leftarrow t$\;
+    }
+}
+\Return $t_{\mathrm{hi}}$\;
+\tcp{optimal peak per-MPD}
+\end{algorithm}
 
 The feasibility check for a given capacity $t$ is a standard bipartite
 max-flow: a source is connected to each server node with edge capacity
@@ -571,7 +577,392 @@ anticipation} of future demand over a well-tuned feedback rule.
 Default gains used in experiments: $K_P = 1.0$, $K_I = 0.01$,
 $K_D = 0.1$, $\tau = 1.0$.
 
-\subsubsection*{Simulation Results}
+% ======================================================================
+\section{Building the RL Policy and Environment}
+% ======================================================================
+
+The RL environment wraps the Octopus memory pooling simulator.  Each VM
+arrival is a decision point; the agent observes the current system state,
+selects an allocation action, and receives a reward reflecting the quality of
+that allocation.
+
+% ----------------------------------------------------------------------
+\subsection{States}
+\label{sec:states}
+% ----------------------------------------------------------------------
+
+The state at decision time (VM arrival on host $i$) must encode enough
+information for the agent to reason about future MPD load.
+
+\subsubsection*{Initial State Space (v0)}
+
+The initial prototype uses a compact observation vector of size
+$2 \cdot d_{\max} + 4$, where $d_{\max}$ is the maximum host degree in the
+topology.  Table~\ref{tab:states_v0} lists every component.
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{llcl}
+\toprule
+\textbf{Slice} & \textbf{Signal} & \textbf{Size} & \textbf{Encoding} \\
+\midrule
+$[0 \;:\; d_{\max})$
+  & Accessible MPD loads
+  & $d_{\max}$
+  & $c_j / D_{\text{pod}}$, zero-padded for $j \notin \mathcal{N}(i)$ \\
+$[d_{\max} \;:\; 2 d_{\max})$
+  & Accessibility mask
+  & $d_{\max}$
+  & $1$ if MPD slot is valid, $0$ otherwise \\
+$[2 d_{\max}]$
+  & VM memory request
+  & 1
+  & $x / D_{\text{pod}}$ \\
+$[2 d_{\max}{+}1]$
+  & Global peak MPD load
+  & 1
+  & $\max_j c_j / D_{\text{pod}}$ \\
+$[2 d_{\max}{+}2]$
+  & Hour-of-day (sin)
+  & 1
+  & $\sin(2\pi\, h / 24)$ \\
+$[2 d_{\max}{+}3]$
+  & Hour-of-day (cos)
+  & 1
+  & $\cos(2\pi\, h / 24)$ \\
+\bottomrule
+\end{tabular}
+\caption{v0 observation vector ($\texttt{OctopusMemPoolEnv.\_get\_obs}$).
+All load values are normalised by total pod DRAM $D_{\text{pod}}$.
+For the \texttt{AG16x6} topology ($d_{\max} = 8$), the observation
+has 20 dimensions.}
+\label{tab:states_v0}
+\end{table}
+
+\paragraph{Limitations.}
+This minimal state is sufficient for initial training but lacks several
+signals that could improve policy quality:
+
+\begin{itemize}
+    \item \textbf{No temporal context.}  The agent sees a single snapshot
+          of MPD loads with no velocity or trend information.  It cannot
+          distinguish a load that is ramping up from one that is declining,
+          limiting its ability to anticipate future peaks.
+    \item \textbf{No per-host memory pressure.}  The observation encodes
+          only the \emph{accessible} MPD loads for the arriving VM's host,
+          not the overall utilisation of each server.  A host nearing
+          physical DRAM capacity will generate more CXL spill, but the agent
+          has no signal to anticipate this.
+    \item \textbf{No VM lifetime or workload profile.}  All VMs look
+          identical except for their memory size.  A short-lived VM and a
+          week-long VM receive the same treatment, even though the long-lived
+          VM has a far larger impact on future MPD headroom.
+    \item \textbf{No SLO violation feedback.}  The agent receives no
+          explicit signal about past over-capacity events, making it
+          difficult to learn conservative allocation strategies.
+\end{itemize}
+
+\subsubsection*{New State Space (v1)}
+
+To address these gaps, the target state space is organised into three
+categories: Resource Health, Workload, and Topology.
+For signals with temporal context, we encode history as current value plus
+delta terms rather than raw window concatenation, making velocity signals
+explicit and reducing the learning burden on the agent.
+Table~\ref{tab:states} defines the full proposed state space.
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{clp{3.8cm}p{3.2cm}lp{4.2cm}}
+\toprule
+\textbf{\#} & \textbf{Category} & \textbf{Signal} & \textbf{Temporal Treatment} & \textbf{Name} & \textbf{Encoding} \\
+\midrule
+1 & Res.\ Health & Per-MPD capacity util.\ (\% full)
+  & 3 windows, 1-hr & \texttt{mpd\_cap}
+  & $[v_t,\Delta_{1h},\Delta_{2h}]\times N_\text{MPD}$ \\
+2 & Res.\ Health & Per-MPD bandwidth util.\ (\% full)
+  & Current snapshot & \texttt{mpd\_bw}
+  & $[v_t]\times N_\text{MPD}$ \\
+3 & Res.\ Health & Server memory pressure (\% RAM)
+  & 3 windows, 1-hr & \texttt{mem\_press}
+  & $[v_t,\Delta_{1h},\Delta_{2h}]\times N_\text{srv}$ \\
+4 & Res.\ Health & Recent SLO violations
+  & 24-hr summary & \texttt{slo\_vio}
+  & Scalar (\% allocs causing overflow) \\
+5 & Workload & Incoming VM size
+  & Current snapshot & \texttt{vm\_size}
+  & Scalar (GB) \\
+6 & Workload & Predicted VM lifetime
+  & Current snapshot & \texttt{vm\_lifetime}
+  & Scalar (hours) \\
+7 & Workload & Peak-to-average ratio
+  & 24-hr summary & \texttt{pta}
+  & $\max/\operatorname{mean}(\text{usage}_{24h})$ \\
+8 & Workload & Predicted memory growth rate
+  & Current snapshot & \texttt{future\_mem}
+  & Scalar (GB/hr) \\
+9 & Topology & Server-to-MPD connectivity mask
+  & Static & \texttt{conn\_mask}
+  & Binary $\in \{0,1\}^{N_\text{MPD}}$ \\
+\bottomrule
+\end{tabular}
+\caption{v1 state space. $v_t$: current value; $\Delta_{1h}$, $\Delta_{2h}$:
+deltas from 1 and 2 hours prior. \texttt{conn\_mask} doubles as the action
+validity mask.}
+\label{tab:states}
+\end{table}
+
+% ----------------------------------------------------------------------
+\subsection{Actions}
+\label{sec:actions}
+% ----------------------------------------------------------------------
+
+The action $a_t$ specifies how to distribute the VM's CXL request $x$ across
+accessible MPDs. The agent outputs a continuous weight vector over the $k$
+MPDs reachable from the arriving VM's server:
+
+\begin{equation}
+    \mathbf{a} = [w_1, w_2, \ldots, w_k] \in \mathbb{R}^k
+    \label{eq:action}
+\end{equation}
+
+subject to the following constraints:
+
+\begin{align}
+    w_i &\geq 0 \quad \forall\, i \label{eq:nonneg} \\
+    \sum_{i=1}^{k} w_i &= 1 \label{eq:sum} \\
+    w_i &= 0 \quad \text{if } \texttt{conn\_mask}_i = 0 \label{eq:mask}
+\end{align}
+
+The weight vector is translated into a physical allocation as follows:
+
+\begin{equation}
+    \text{GB allocated from MPD}_i = w_i \times \texttt{vm\_size}
+    \label{eq:alloc}
+\end{equation}
+
+The connectivity mask (\texttt{conn\_mask}) is applied prior to the softmax
+output layer, zeroing out unreachable MPDs. The softmax then normalises the
+remaining weights to satisfy Equation~\ref{eq:sum}.
+
+Two action types are exposed to the RL agent: (1)~the continuous allocation
+split $\mathbf{a}$ across connected MPDs (Equation~\ref{eq:action}), and
+(2)~a binary \texttt{flag\_migration(vm\_id)} flag that marks a VM for
+migration. Physical page placement and address mapping are handled
+mechanically by the system and are transparent to the agent.
+
+% ----------------------------------------------------------------------
+\subsection{Reward}
+\label{sec:reward}
+% ----------------------------------------------------------------------
+
+The reward should incentivise \emph{balanced} MPD usage so that the eventual
+peak load (and thus required CXL capacity) is minimised. We evaluate two
+reward formulations. Option A serves as the simpler baseline; Option B
+extends it with a delayed component to improve credit assignment over the
+VM lifetime.
+
+\subsubsection*{Option A: Fully Immediate, Smooth}
+
+All components are evaluated at VM arrival time. The SLO violation penalty
+is proportional and smooth, providing stable gradient signal for SAC.
+
+\begin{equation}
+    R = \alpha \cdot \left(1 - \frac{\max(\texttt{mpd\_cap})}{\texttt{mpd\_cap\_max}}\right)
+      - \beta \cdot \texttt{slo\_vio}
+      - \gamma \cdot \mathbb{1}[\texttt{flag\_migration}]
+    \label{eq:reward_a}
+\end{equation}
+
+where $\alpha,\ \beta,\ \gamma > 0$ are weights reflecting objective priority,
+with $\alpha < \beta$ to enforce SLO priority over utilization.
+
+\subsubsection*{Option B: Immediate + Delayed}
+
+Option B decomposes the reward into an immediate component at VM arrival
+and a delayed component at VM termination, discounted by the VM lifetime $T$.
+The immediate component provides smooth gradient signal; the delayed component
+applies hard penalties for actual SLO violations and migrations over the
+VM's lifetime.
+
+\begin{equation}
+    R_t = \underbrace{\alpha \cdot \left(1 - \frac{\max(\texttt{mpd\_cap})}{\texttt{mpd\_cap\_max}}\right)}_{\text{immediate at arrival}}
+        + \underbrace{\lambda^{T} \left(- \beta \cdot \texttt{slo\_vio}_{T} - \delta \cdot \mathbb{1}[\text{migrated}]\right)}_{\text{delayed at termination}}
+    \label{eq:reward_b}
+\end{equation}
+
+where $T$ is the VM lifetime in hours (known at arrival via \texttt{vm\_lifetime}),
+$\lambda \in (0,1)$ is the discount factor, and $\beta > \delta$ ensures SLO
+violations are penalised more heavily than migration.
+
+\noindent\textbf{Note:} In both formulations, weights $\alpha$, $\beta$,
+$\gamma$, $\delta$ are initially manually tuned and reflect the objective
+priority ordering (utilization $\prec$ SLO $\prec$ migration). Future work
+will explore online weight adaptation via multi-objective RL (MORL) to remove
+the need for manual tuning, directly addressing a known limitation of
+FleetIO~\cite{fleetio2025}.
+
+% ----------------------------------------------------------------------
+\subsection{Model}
+\label{sec:model}
+% ----------------------------------------------------------------------
+
+Two RL algorithms are evaluated, plus a constrained variant:
+
+\subsubsection*{Soft Actor-Critic (SAC)}
+
+SAC~\cite{haarnoja2018sac} is an off-policy, maximum-entropy RL algorithm
+for continuous action spaces.  It trains a stochastic policy $\pi_\phi$ by
+jointly maximising expected reward and action entropy:
+\[
+    J(\pi) = \mathbb{E}\!\left[\sum_t \bigl(r_t + \alpha \mathcal{H}(\pi(\cdot \mid s_t))\bigr)\right],
+\]
+where $\alpha$ is a temperature parameter (learnable or fixed).  SAC is chosen
+as the primary model because:
+\begin{itemize}
+    \item Our action space is continuous ($\mathbb{R}^m$) and SAC is
+          sample-efficient in this regime.
+    \item The entropy term prevents premature collapse to deterministic
+          policies that over-specialise on training workloads.
+    \item SAC has strong empirical performance on resource-management tasks
+          (FleetIO uses a related off-policy approach).
+\end{itemize}
+
+\subsubsection*{Proximal Policy Optimisation (PPO)}
+
+PPO~\cite{schulman2017ppo} is an on-policy algorithm that clips the policy
+gradient update to prevent large policy shifts.  It serves as a fallback for
+cases where SAC's replay buffer struggles with the temporal non-stationarity
+of VM workloads (a known SAC weakness on highly correlated sequential data).
+
+\subsubsection*{Locally Constrained Policy Optimisation (LCPO)}
+
+Online RL in production systems faces \emph{catastrophic forgetting} (CF):
+as the agent trains on new experiences, it overwrites knowledge acquired
+from earlier workload regimes.  This is a concrete risk in our setting ---
+diurnal demand cycles and workload shifts mean that the distribution of
+VM arrivals changes continuously, and an agent that forgets morning-hour
+patterns by the evening will make poor allocation decisions the next day.
+
+LCPO~\cite{hamadanian2025lcpo} directly addresses CF in non-stationary,
+context-driven environments.  Rather than relying on task labels (which
+are unavailable in production) or brittle regularisation heuristics, LCPO
+\emph{locally constrains} each policy-gradient update by anchoring the new
+policy on samples drawn from \emph{outside} the current context
+distribution.  Concretely, the update solves:
+\[
+    \max_\theta \; \mathbb{E}_{\tau \sim \mathcal{D}_{\text{cur}}}
+        \bigl[J(\pi_\theta)\bigr]
+    \quad \text{s.t.} \quad
+    \mathrm{KL}\!\bigl(\pi_\theta(\cdot|s) \;\|\; \pi_{\theta_{\text{old}}}(\cdot|s)\bigr)
+    \le \delta
+    \quad \forall s \in \mathcal{D}_{\text{old}},
+\]
+where $\mathcal{D}_{\text{cur}}$ is the current context window and
+$\mathcal{D}_{\text{old}}$ is a buffer of past experiences from different
+context regimes.  The KL constraint prevents the updated policy from
+deviating too far on old states, preserving cross-context knowledge without
+requiring explicit task boundaries.
+
+In the ICLR~'25 evaluation, LCPO matches a \emph{prescient} offline agent
+trained across all context traces simultaneously, while operating fully
+online.  For our memory pooling setting, LCPO is particularly attractive
+because VM demand traces exhibit exactly the non-stationary, context-driven
+structure LCPO is designed for: the ``context'' is the current workload
+regime (time-of-day, cluster load level), and the agent must retain
+knowledge of all regimes to allocate well across the full 14-day horizon.
+
+% ----------------------------------------------------------------------
+\subsection{Training and Deployment}
+\label{sec:training}
+% ----------------------------------------------------------------------
+
+\subsubsection*{Episode Structure and Replay}
+
+Training uses the Octopus simulator as the RL environment via
+Stable-Baselines3~\cite{stable_baselines3}.  Each \emph{episode} replays
+one full production VM trace (two weeks at 5-minute resolution).  At every
+VM arrival event the agent receives an observation, outputs an allocation
+action, and receives the immediate reward.  Episode termination occurs when
+the trace is exhausted; the environment resets by reshuffling the pod-to-node
+assignment (random seed incremented) and replaying the same trace, providing
+variation in which servers land in the same pod.
+
+SAC is off-policy: all transitions $(s_t, a_t, r_t, s_{t+1})$ are stored in
+a replay buffer and sampled uniformly for gradient updates.  A single
+training environment suffices; a separate deterministic evaluation
+environment (a different trace, \texttt{LON23}) runs every
+\texttt{eval\_freq} steps to track generalisation.
+
+\subsubsection*{Hyperparameter Comparison: Slow vs.\ Fast Runs}
+
+Two training configurations were used, both training SAC for 1\,M timesteps
+on the \texttt{AMS20} trace with the \texttt{AG16x6\_expander\_quads}
+topology (96 hosts, 192 MPDs, $d_{\max}=8$):
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Hyperparameter} & \textbf{Slow (6.5 hr)} & \textbf{Fast (34 min)} \\
+\midrule
+Network architecture & $[256, 256]$ & $[128, 128]$ \\
+Replay buffer size   & 1\,000\,000  & 300\,000 \\
+Batch size           & 256          & 512 \\
+\texttt{train\_freq} & 1            & 16 \\
+Checkpoint interval  & 10\,000 steps & 50\,000 steps \\
+Eval interval        & 20\,000 steps & 100\,000 steps \\
+Gradient updates at 1M steps & $\sim$999\,000 & $\sim$62\,000 \\
+Final eval reward    & $-3.17 \pm 0.87$ & $-2.71 \pm 0.00$ \\
+Device               & \texttt{cuda:0}  & \texttt{cuda:1} \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of slow and fast SAC training configurations.  Both
+train for 1\,M environment steps on AMS20, evaluated on LON23.  The fast
+run uses \texttt{train\_freq=16}: one gradient step per 16 environment
+steps, yielding $\sim$16$\times$ fewer updates.  The fast run achieves a
+slightly better final eval reward, suggesting the slow run may be
+overfitting.}
+\label{tab:training_configs}
+\end{table}
+
+The key difference is \texttt{train\_freq}: the slow run performs a gradient
+update at \emph{every} environment step ($\sim$999\,k updates total), while
+the fast run updates every 16 steps ($\sim$62\,k updates total).  Despite
+far fewer gradient steps, the fast run converges to a marginally better
+evaluation reward.  This is consistent with the known SAC behaviour that
+excessive updates on correlated sequential data can lead to overfitting
+on the replay buffer.
+
+\subsubsection*{Deployment Considerations}
+
+In production, the RL agent would run as a centralised controller on the
+pod management plane.  At each VM arrival (an event-driven trigger), the
+controller constructs the observation vector, runs a forward pass through
+the policy network, and returns the allocation split---all within the VM
+scheduling latency budget ($\ll 1$\,ms for a two-layer MLP).  No gradient
+updates occur at inference time; the model is frozen after offline training
+and re-trained periodically (e.g.\ weekly) on fresh trace data.
+
+The \texttt{best\_model} checkpoint (saved by \texttt{EvalCallback} whenever
+the LON23 evaluation reward improves) is the natural candidate for
+deployment, as it represents the policy that generalised best to the
+held-out cluster during training.
+
+% ======================================================================
+\section{Simulation Results}
+% ======================================================================
+
+
+
+\subsection{v0 Simulation Results}
 
 Table~\ref{tab:greedy_vs_opt} summarises pooling savings for the
 \texttt{AG16x6\_expander\_quads} topology (16 hosts, 6 MPDs, regular
@@ -780,336 +1171,62 @@ The greedy-to-optimal gap (Table~\ref{tab:greedy_vs_opt}) motivates a
 learned policy: a policy with \emph{lookahead} about future demand should
 be able to close part of this gap without requiring full migration.
 
-% ======================================================================
-\section{Building the RL Policy and Environment}
-% ======================================================================
-
-The RL environment wraps the Octopus memory pooling simulator.  Each VM
-arrival is a decision point; the agent observes the current system state,
-selects an allocation action, and receives a reward reflecting the quality of
-that allocation.
-
 % ----------------------------------------------------------------------
-\subsection{States}
-\label{sec:states}
+\subsection{Slow vs.\ Fast Model Comparison}
+\label{sec:slow_vs_fast}
 % ----------------------------------------------------------------------
 
-The state at decision time (VM arrival on host $i$) must encode enough
-information for the agent to reason about future MPD load.
+\red{TODO (experiments needed --- see Section~\ref{sec:next_steps}).}
 
-\subsubsection*{Current Implementation (v0)}
+Both trained checkpoints exist (\texttt{output/checkpoints/best\_model.zip}
+for the slow run; \texttt{output/checkpoints\_fast/best\_model.zip} for the
+fast run).  The experiments required to populate this section are:
 
-The initial prototype uses a compact observation vector of size
-$2 \cdot d_{\max} + 4$, where $d_{\max}$ is the maximum host degree in the
-topology.  Table~\ref{tab:states_v0} lists every component.
+\begin{enumerate}
+    \item Run \texttt{evaluate.py --policy greedy rl --model output/checkpoints/best\_model} and
+          \texttt{output/checkpoints\_fast/best\_model} on both AMS20 and
+          LON23 traces, 50 pod mappings each.  Record pooling savings
+          (avg, min, max, std).
+    \item Plot per-MHD load time-series for both models side-by-side
+          (analogous to Figures~\ref{fig:ts_greedy}/\ref{fig:ts_rl}) to
+          visualise whether the fast model learns better load balance.
+    \item Plot training curves (eval reward vs.\ timestep) from
+          \texttt{output/logs/evaluations.npz} and
+          \texttt{output/logs\_fast/evaluations.npz} on the same axes.
+\end{enumerate}
 
-\begin{table}[H]
-\centering
-\small
-\renewcommand{\arraystretch}{1.3}
-\begin{tabular}{llcl}
-\toprule
-\textbf{Slice} & \textbf{Signal} & \textbf{Size} & \textbf{Encoding} \\
-\midrule
-$[0 \;:\; d_{\max})$
-  & Accessible MPD loads
-  & $d_{\max}$
-  & $c_j / D_{\text{pod}}$, zero-padded for $j \notin \mathcal{N}(i)$ \\
-$[d_{\max} \;:\; 2 d_{\max})$
-  & Accessibility mask
-  & $d_{\max}$
-  & $1$ if MPD slot is valid, $0$ otherwise \\
-$[2 d_{\max}]$
-  & VM memory request
-  & 1
-  & $x / D_{\text{pod}}$ \\
-$[2 d_{\max}{+}1]$
-  & Global peak MPD load
-  & 1
-  & $\max_j c_j / D_{\text{pod}}$ \\
-$[2 d_{\max}{+}2]$
-  & Hour-of-day (sin)
-  & 1
-  & $\sin(2\pi\, h / 24)$ \\
-$[2 d_{\max}{+}3]$
-  & Hour-of-day (cos)
-  & 1
-  & $\cos(2\pi\, h / 24)$ \\
-\bottomrule
-\end{tabular}
-\caption{v0 observation vector ($\texttt{OctopusMemPoolEnv.\_get\_obs}$).
-All load values are normalised by total pod DRAM $D_{\text{pod}}$.
-For the \texttt{AG16x6} topology ($d_{\max} = 8$), the observation
-has 20 dimensions.}
-\label{tab:states_v0}
-\end{table}
-
-\paragraph{Limitations.}
-This minimal state is sufficient for initial training but lacks several
-signals that could improve policy quality:
-
-\begin{itemize}
-    \item \textbf{No temporal context.}  The agent sees a single snapshot
-          of MPD loads with no velocity or trend information.  It cannot
-          distinguish a load that is ramping up from one that is declining,
-          limiting its ability to anticipate future peaks.
-    \item \textbf{No per-host memory pressure.}  The observation encodes
-          only the \emph{accessible} MPD loads for the arriving VM's host,
-          not the overall utilisation of each server.  A host nearing
-          physical DRAM capacity will generate more CXL spill, but the agent
-          has no signal to anticipate this.
-    \item \textbf{No VM lifetime or workload profile.}  All VMs look
-          identical except for their memory size.  A short-lived VM and a
-          week-long VM receive the same treatment, even though the long-lived
-          VM has a far larger impact on future MPD headroom.
-    \item \textbf{No SLO violation feedback.}  The agent receives no
-          explicit signal about past over-capacity events, making it
-          difficult to learn conservative allocation strategies.
-\end{itemize}
-
-\subsubsection*{Proposed State Space (v1)}
-
-To address these gaps, the target state space is organised into three
-categories: Resource Health, Workload, and Topology.
-For signals with temporal context, we encode history as current value plus
-delta terms rather than raw window concatenation, making velocity signals
-explicit and reducing the learning burden on the agent.
-Table~\ref{tab:states} defines the full proposed state space.
-
-\begin{landscape}
-\begin{table}[H]
-\centering
-\renewcommand{\arraystretch}{1.6}
-\setlength{\tabcolsep}{6pt}
-\begin{tabularx}{\linewidth}{|c|l|X|l|l|X|}
-\hline
-\textbf{\#} & \textbf{Category} & \textbf{Signal} & \textbf{Temporal Treatment} & \textbf{Name} & \textbf{Encoding} \\
-\hline
-1 & Resource Health & Per-MPD capacity utilization (\% full)
-  & 3 windows, 1-hr & \texttt{mpd\_cap}
-  & $[v_t,\ \Delta_{1h},\ \Delta_{2h}]\ \times\ N_\text{MPD}$ \\
-\hline
-2 & Resource Health & Per-MPD bandwidth utilization (\% full)
-  & Current snapshot & \texttt{mpd\_bw}
-  & $[v_t]\ \times\ N_\text{MPD}$ \\
-\hline
-3 & Resource Health & Server memory pressure (\% RAM utilized)
-  & 3 windows, 1-hr & \texttt{mem\_press}
-  & $[v_t,\ \Delta_{1h},\ \Delta_{2h}]\ \times\ N_\text{servers}$ \\
-\hline
-4 & Resource Health & Recent SLO violations (over-capacity events)
-  & 24-hr historical summary & \texttt{slo\_vio}
-  & Scalar (\% allocations causing MPD overflow) \\
-\hline
-5 & Workload & Incoming VM size (requested memory)
-  & Current snapshot & \texttt{vm\_size}
-  & Scalar (GB) \\
-\hline
-6 & Workload & Predicted VM lifetime
-  & Current snapshot & \texttt{vm\_lifetime}
-  & Scalar (hours) \\
-\hline
-7 & Workload & Customer peak-to-average ratio
-  & 24-hr historical summary & \texttt{pta}
-  & $\max(\text{usage}_{24h})\ /\ \text{mean}(\text{usage}_{24h})$ \\
-\hline
-8 & Workload & Predicted future memory (growth rate)
-  & Current snapshot & \texttt{future\_mem}
-  & Scalar (GB/hr) \\
-\hline
-9 & Topology & Server-to-MPD connectivity mask
-  & Static & \texttt{conn\_mask}
-  & Binary vector $\in \{0,1\}^{N_\text{MPD}}$ \\
-\hline
-\end{tabularx}
-\caption{State space for the single central RL controller. $v_t$ denotes
-the current value; $\Delta_{1h}$, $\Delta_{2h}$ denote deltas from 1 and
-2 hours prior respectively. \texttt{conn\_mask} is a static topology signal
-used as a validity mask over the action space.}
-\label{tab:states}
-\end{table}
-\end{landscape}
+The expected finding is that the fast model's coarser update schedule
+reduces overfitting on the training trace and generalises better to LON23,
+consistent with the final eval rewards in Table~\ref{tab:training_configs}.
 
 % ----------------------------------------------------------------------
-\subsection{Actions}
-\label{sec:actions}
+\subsection{Scaling to 96-Host Pods}
+\label{sec:96hosts}
 % ----------------------------------------------------------------------
 
-The action $a_t$ specifies how to distribute the VM's CXL request $x$ across
-accessible MPDs. The agent outputs a continuous weight vector over the $k$
-MPDs reachable from the arriving VM's server:
+\red{TODO (experiments needed --- see Section~\ref{sec:next_steps}).}
 
-\begin{equation}
-    \mathbf{a} = [w_1, w_2, \ldots, w_k] \in \mathbb{R}^k
-    \label{eq:action}
-\end{equation}
+All RL results to date use the \texttt{AG16x6\_expander\_quads} topology
+(16 hosts, 6 MPDs per pod).  The production Acadia target is a 96-host pod
+with 120 MPDs (80 internal + 40 external).  The experiments required to
+populate this section are:
 
-subject to the following constraints:
-
-\begin{align}
-    w_i &\geq 0 \quad \forall\, i \label{eq:nonneg} \\
-    \sum_{i=1}^{k} w_i &= 1 \label{eq:sum} \\
-    w_i &= 0 \quad \text{if } \texttt{conn\_mask}_i = 0 \label{eq:mask}
-\end{align}
-
-The weight vector is translated into a physical allocation as follows:
-
-\begin{equation}
-    \text{GB allocated from MPD}_i = w_i \times \texttt{vm\_size}
-    \label{eq:alloc}
-\end{equation}
-
-The connectivity mask (\texttt{conn\_mask}) is applied prior to the softmax
-output layer, zeroing out unreachable MPDs. The softmax then normalises the
-remaining weights to satisfy Equation~\ref{eq:sum}. Table~\ref{tab:actions}
-summarises all agent actions and their abstraction level.
-
-\begin{table}[H]
-\centering
-\renewcommand{\arraystretch}{1.6}
-\setlength{\tabcolsep}{8pt}
-\begin{tabularx}{\linewidth}{|c|X|l|X|}
-\hline
-\textbf{\#} & \textbf{Action} & \textbf{Type} & \textbf{Abstraction Level} \\
-\hline
-1 & Allocation split $\mathbf{a} = [w_1, \ldots, w_k]$ across connected MPDs
-  & Continuous & High-level strategic $\rightarrow$ RL \\
-\hline
-2 & \texttt{flag\_migration(vm\_id)} --- flag a VM for migration
-  & Binary & High-level strategic $\rightarrow$ RL \\
-\hline
---- & Physical page placement & Mechanical & Low-level $\rightarrow$ system \\
-\hline
---- & Address mapping updates & Mechanical & Low-level $\rightarrow$ system \\
-\hline
-\end{tabularx}
-\caption{Action space for the single central RL controller. Actions 1 and 2
-are high-level strategic decisions made by the RL agent. Physical page
-placement and address mapping are handled mechanically by the system and are
-transparent to the agent.}
-\label{tab:actions}
-\end{table}
-
-% ----------------------------------------------------------------------
-\subsection{Reward}
-\label{sec:reward}
-% ----------------------------------------------------------------------
-
-The reward should incentivise \emph{balanced} MPD usage so that the eventual
-peak load (and thus required CXL capacity) is minimised. We evaluate two
-reward formulations. Option A serves as the simpler baseline; Option B
-extends it with a delayed component to improve credit assignment over the
-VM lifetime.
-
-\subsubsection*{Option A: Fully Immediate, Smooth}
-
-All components are evaluated at VM arrival time. The SLO violation penalty
-is proportional and smooth, providing stable gradient signal for SAC.
-
-\begin{equation}
-    R = \alpha \cdot \left(1 - \frac{\max(\texttt{mpd\_cap})}{\texttt{mpd\_cap\_max}}\right)
-      - \beta \cdot \texttt{slo\_vio}
-      - \gamma \cdot \mathbb{1}[\texttt{flag\_migration}]
-    \label{eq:reward_a}
-\end{equation}
-
-where $\alpha,\ \beta,\ \gamma > 0$ are weights reflecting objective priority,
-with $\alpha < \beta$ to enforce SLO priority over utilization.
-
-\subsubsection*{Option B: Immediate + Delayed}
-
-Option B decomposes the reward into an immediate component at VM arrival
-and a delayed component at VM termination, discounted by the VM lifetime $T$.
-The immediate component provides smooth gradient signal; the delayed component
-applies hard penalties for actual SLO violations and migrations over the
-VM's lifetime.
-
-\begin{equation}
-    R_t = \underbrace{\alpha \cdot \left(1 - \frac{\max(\texttt{mpd\_cap})}{\texttt{mpd\_cap\_max}}\right)}_{\text{immediate at arrival}}
-        + \underbrace{\lambda^{T} \left(- \beta \cdot \texttt{slo\_vio}_{T} - \delta \cdot \mathbb{1}[\text{migrated}]\right)}_{\text{delayed at termination}}
-    \label{eq:reward_b}
-\end{equation}
-
-where $T$ is the VM lifetime in hours (known at arrival via \texttt{vm\_lifetime}),
-$\lambda \in (0,1)$ is the discount factor, and $\beta > \delta$ ensures SLO
-violations are penalised more heavily than migration.
-
-\noindent\textbf{Note:} In both formulations, weights $\alpha$, $\beta$,
-$\gamma$, $\delta$ are initially manually tuned and reflect the objective
-priority ordering (utilization $\prec$ SLO $\prec$ migration). Future work
-will explore online weight adaptation via multi-objective RL (MORL) to remove
-the need for manual tuning, directly addressing a known limitation of
-FleetIO~\cite{fleetio2025}.
-
-% ----------------------------------------------------------------------
-\subsection{Model}
-\label{sec:model}
-% ----------------------------------------------------------------------
-
-Two RL algorithms are evaluated, plus a constrained variant:
-
-\subsubsection*{Soft Actor-Critic (SAC)}
-
-SAC~\cite{haarnoja2018sac} is an off-policy, maximum-entropy RL algorithm
-for continuous action spaces.  It trains a stochastic policy $\pi_\phi$ by
-jointly maximising expected reward and action entropy:
-\[
-    J(\pi) = \mathbb{E}\!\left[\sum_t \bigl(r_t + \alpha \mathcal{H}(\pi(\cdot \mid s_t))\bigr)\right],
-\]
-where $\alpha$ is a temperature parameter (learnable or fixed).  SAC is chosen
-as the primary model because:
-\begin{itemize}
-    \item Our action space is continuous ($\mathbb{R}^m$) and SAC is
-          sample-efficient in this regime.
-    \item The entropy term prevents premature collapse to deterministic
-          policies that over-specialise on training workloads.
-    \item SAC has strong empirical performance on resource-management tasks
-          (FleetIO uses a related off-policy approach).
-\end{itemize}
-
-\subsubsection*{Proximal Policy Optimisation (PPO)}
-
-PPO~\cite{schulman2017ppo} is an on-policy algorithm that clips the policy
-gradient update to prevent large policy shifts.  It serves as a fallback for
-cases where SAC's replay buffer struggles with the temporal non-stationarity
-of VM workloads (a known SAC weakness on highly correlated sequential data).
-
-\subsubsection*{Locally Constrained Policy Optimisation (LCPO)}
-
-Online RL in production systems faces \emph{catastrophic forgetting} (CF):
-as the agent trains on new experiences, it overwrites knowledge acquired
-from earlier workload regimes.  This is a concrete risk in our setting ---
-diurnal demand cycles and workload shifts mean that the distribution of
-VM arrivals changes continuously, and an agent that forgets morning-hour
-patterns by the evening will make poor allocation decisions the next day.
-
-LCPO~\cite{hamadanian2025lcpo} directly addresses CF in non-stationary,
-context-driven environments.  Rather than relying on task labels (which
-are unavailable in production) or brittle regularisation heuristics, LCPO
-\emph{locally constrains} each policy-gradient update by anchoring the new
-policy on samples drawn from \emph{outside} the current context
-distribution.  Concretely, the update solves:
-\[
-    \max_\theta \; \mathbb{E}_{\tau \sim \mathcal{D}_{\text{cur}}}
-        \bigl[J(\pi_\theta)\bigr]
-    \quad \text{s.t.} \quad
-    \mathrm{KL}\!\bigl(\pi_\theta(\cdot|s) \;\|\; \pi_{\theta_{\text{old}}}(\cdot|s)\bigr)
-    \le \delta
-    \quad \forall s \in \mathcal{D}_{\text{old}},
-\]
-where $\mathcal{D}_{\text{cur}}$ is the current context window and
-$\mathcal{D}_{\text{old}}$ is a buffer of past experiences from different
-context regimes.  The KL constraint prevents the updated policy from
-deviating too far on old states, preserving cross-context knowledge without
-requiring explicit task boundaries.
-
-In the ICLR~'25 evaluation, LCPO matches a \emph{prescient} offline agent
-trained across all context traces simultaneously, while operating fully
-online.  For our memory pooling setting, LCPO is particularly attractive
-because VM demand traces exhibit exactly the non-stationary, context-driven
-structure LCPO is designed for: the ``context'' is the current workload
-regime (time-of-day, cluster load level), and the agent must retain
-knowledge of all regimes to allocate well across the full 14-day horizon.
+\begin{enumerate}
+    \item \textbf{Greedy and optimal baselines at 96 hosts.}
+          Run \texttt{evaluate.py --policy greedy --topology
+          data/topologies/<96h\_topology>.csv} on all ten Azure traces, 50
+          pod mappings each.  This establishes the savings budget the RL
+          policy must beat.
+    \item \textbf{RL training at 96 hosts.}
+          Retrain SAC with the fast configuration on the 96-host topology.
+          The observation vector grows from 20 to $2 \times 8 + 4 = 20$
+          dimensions (same $d_{\max}=8$), so no architectural change is
+          needed; the pod-size increase affects only simulation runtime.
+    \item \textbf{Evaluate generalisation across topologies.}
+          Test the 96-host model on the Acadia-96 topology ($N=4$,
+          $m=120$) and compare pooling savings against greedy and the
+          static-optimal bound from Table~\ref{tab:greedy_vs_opt}.
+\end{enumerate}
 
 % ======================================================================
 \section{Next Steps: How to Verify the Results}

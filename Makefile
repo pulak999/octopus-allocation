@@ -24,7 +24,7 @@ $(VENV)/bin/activate: requirements.txt
 # ── plots ─────────────────────────────────────────────────────────────────────
 .PHONY: plots
 plots: venv
-	$(PYRUN) plot_demand.py
+	$(PYRUN) scripts/plot_demand.py
 
 # ── LaTeX pdf ─────────────────────────────────────────────────────────────────
 .PHONY: pdf
