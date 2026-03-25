@@ -58,6 +58,11 @@ class OctopusMemPoolEnv(gym.Env):
         machine_sz,
         M,
         seed: int | None = None,
+        variance_lambda: float = 0.5,
+        skip_hotfix: bool = False,
+        precomputed_events: dict | None = None,
+        aug_config=None,
+        trace_pool=None,
     ):
         super().__init__()
 
@@ -67,8 +72,9 @@ class OctopusMemPoolEnv(gym.Env):
         self.node_to_machine = node_to_machine
         self.machine_sz = machine_sz
 
-        # Per-pod topology
+        # Per-pod topology (base — never mutated by augmentation)
         self.M = [list(row) for row in M]          # keep as nested list
+        self._M_np = np.array(M, dtype=np.int32)   # numpy copy for augmentation
         self.pod_size = len(M)
         self.num_mhd = len(M[0])
         self.mem_idx = 1                            # index into rss / machine_sz
@@ -91,6 +97,19 @@ class OctopusMemPoolEnv(gym.Env):
             low=-1.0, high=1.0, shape=(self.max_degree,), dtype=np.float32
         )
 
+        self.variance_lambda = variance_lambda
+        self.skip_hotfix = skip_hotfix
+
+        # Optional precomputed event cache {seed -> (events, pod_dur, pod_dram, base_time, pod_start_ts)}
+        self._precomputed_events = precomputed_events
+
+        # Augmentation
+        self.aug_config = aug_config
+        self._aug_rng = np.random.default_rng()
+
+        # Multi-trace: list of (all_vms, node_to_vms, node_to_machine, vm_type_sz, machine_sz)
+        self.trace_pool = trace_pool
+
         # Seed management
         self._init_seed = seed
         self._seed = seed if seed is not None else 0
@@ -109,11 +128,31 @@ class OctopusMemPoolEnv(gym.Env):
             self._seed = (self._init_seed or 0) + self._episode_count
         self._episode_count += 1
 
-        # 1. Random pod assignment
-        self._generate_pod(self._seed)
+        # 0. Multi-trace: swap to a random trace if enabled
+        if (self.aug_config is not None and self.aug_config.multi_trace
+                and self.trace_pool):
+            trace_idx = int(self._aug_rng.integers(0, len(self.trace_pool)))
+            self._switch_trace(self.trace_pool[trace_idx])
 
-        # 2. Build sorted event timeline (includes VM filtering)
-        self._build_events()
+        # 1 & 2. Pod assignment + event timeline
+        if self._precomputed_events is not None and self._seed in self._precomputed_events:
+            self._load_precomputed(self._seed)
+        else:
+            self._generate_pod(self._seed)
+            self._build_events()
+
+        # 2b. Apply augmentation if configured
+        self._current_aug_params = None
+        if self.aug_config is not None and self.aug_config.enabled:
+            self._apply_augmentation()
+
+        # Reset host_to_mhds to base topology (augmentation may override below)
+        if self._current_aug_params is None:
+            # No augmentation — ensure host_to_mhds matches base topology
+            for h in range(self.pod_size):
+                self.host_to_mhds[h] = [
+                    j for j in range(self.num_mhd) if self.M[h][j] != 0
+                ]
 
         # 3. Simulation state
         self.cur_cxl_mem_vec = np.zeros(self.num_mhd, dtype=np.float64)
@@ -134,6 +173,8 @@ class OctopusMemPoolEnv(gym.Env):
             "pod_seed": self._seed,
             "num_events": len(self.events),
         }
+        if self._current_aug_params is not None:
+            info["aug_params"] = self._current_aug_params
         return obs, info
 
     # ------------------------------------------------------------------
@@ -167,10 +208,12 @@ class OctopusMemPoolEnv(gym.Env):
             for idx, mhd in enumerate(mhd_list):
                 self.dealloc_events[dealloc_tick, mhd] += alloc_gb[idx]
 
-        # --- Reward: -Δ peak (normalised by fair-share-per-MPD) ----------
+        # --- Reward: -Δ peak + variance penalty --------------------------
         new_peak = float(np.max(self.cur_cxl_mem_vec))
         fair_share = self.pod_dram / self.num_mhd if self.num_mhd > 0 else 1.0
-        reward = -(new_peak - old_peak) / (fair_share + 1e-12)
+        mpd_loads = self.cur_cxl_mem_vec / (fair_share + 1e-12)
+        load_variance = float(np.var(mpd_loads))
+        reward = -(new_peak - old_peak) / (fair_share + 1e-12) - self.variance_lambda * load_variance
         self.max_peak = max(self.max_peak, new_peak)
 
         # --- Advance to next event --------------------------------------
@@ -270,39 +313,40 @@ class OctopusMemPoolEnv(gym.Env):
         # --- HOTFIX: filter VMs that would exceed per-node DRAM ----------
         vmkey_to_skip: set = set()
 
-        for node in self.pod_nodes:
-            node_alloc = [[] for _ in range(self.pod_dur)]
-            node_dealloc = np.zeros(self.pod_dur, dtype=np.float64)
-            node_cap = float(
-                np.asarray(
-                    self.machine_sz[self.node_to_machine[node]], dtype=float
-                )[self.mem_idx]
-            )
+        if not self.skip_hotfix:
+            for node in self.pod_nodes:
+                node_alloc = [[] for _ in range(self.pod_dur)]
+                node_dealloc = np.zeros(self.pod_dur, dtype=np.float64)
+                node_cap = float(
+                    np.asarray(
+                        self.machine_sz[self.node_to_machine[node]], dtype=float
+                    )[self.mem_idx]
+                )
 
-            for vmkey in self.node_to_vms.get(node, []):
-                vm = self.all_vms[vmkey]
-                vm_s = to_tick(vm.start_time) - pod_start_ts
-                vm_e = to_tick(vm.end_time) - pod_start_ts
-                if vm_e < 0:
-                    vmkey_to_skip.add(vmkey)
-                    continue
-                mem = float(np.asarray(vm.rss, dtype=float)[self.mem_idx])
-                node_alloc[vm_s].append((vmkey, vm_e + 1, mem))
-                if vm_e + 1 < self.pod_dur:
-                    node_dealloc[vm_e + 1] += mem
-
-            cur = 0.0
-            for ts in range(self.pod_dur):
-                cur -= node_dealloc[ts]
-                if cur < 0:
-                    cur = 0.0
-                for vmkey, end_ts, mem in node_alloc[ts]:
-                    cur += mem
-                    if cur > node_cap:
-                        cur -= mem
+                for vmkey in self.node_to_vms.get(node, []):
+                    vm = self.all_vms[vmkey]
+                    vm_s = to_tick(vm.start_time) - pod_start_ts
+                    vm_e = to_tick(vm.end_time) - pod_start_ts
+                    if vm_e < 0:
                         vmkey_to_skip.add(vmkey)
-                        if end_ts < self.pod_dur:
-                            node_dealloc[end_ts] -= mem
+                        continue
+                    mem = float(np.asarray(vm.rss, dtype=float)[self.mem_idx])
+                    node_alloc[vm_s].append((vmkey, vm_e + 1, mem))
+                    if vm_e + 1 < self.pod_dur:
+                        node_dealloc[vm_e + 1] += mem
+
+                cur = 0.0
+                for ts in range(self.pod_dur):
+                    cur -= node_dealloc[ts]
+                    if cur < 0:
+                        cur = 0.0
+                    for vmkey, end_ts, mem in node_alloc[ts]:
+                        cur += mem
+                        if cur > node_cap:
+                            cur -= mem
+                            vmkey_to_skip.add(vmkey)
+                            if end_ts < self.pod_dur:
+                                node_dealloc[end_ts] -= mem
 
         # --- Collect events -----------------------------------------------
         events: list[tuple] = []
@@ -334,6 +378,69 @@ class OctopusMemPoolEnv(gym.Env):
         # Numerical safety (guard against tiny drift below zero)
         np.maximum(self.cur_cxl_mem_vec, 0.0, out=self.cur_cxl_mem_vec)
         self._last_depart_tick = tick
+
+    # ------------------------------------------------------------------
+    def _load_precomputed(self, seed: int):
+        """Restore episode state from a precomputed cache entry."""
+        events, pod_dur, pod_dram, base_time, pod_start_ts = self._precomputed_events[seed]
+        self.events = events
+        self.pod_dur = pod_dur
+        self.pod_dram = pod_dram
+        self.base_time = base_time
+        self._pod_start_ts = pod_start_ts
+        self.trace_start = base_time
+
+        # Reconstruct host_to_mhds and node mapping from events so _get_obs works.
+        # We still need pod_nodes / node_to_pod_id for topology info — regenerate them
+        # cheaply (no event-building cost).
+        self._generate_pod(seed)
+
+    # ------------------------------------------------------------------
+    def _apply_augmentation(self):
+        """Apply augmentation transforms to the current episode's events and topology.
+
+        Called from reset() after event construction. Modifies self.events and
+        self.host_to_mhds in place. Retries up to max_resample_attempts if
+        augmented episode has too few events.
+        """
+        from octopus.augmentation import sample_augmentation_params, apply_augmentation
+
+        for _attempt in range(self.aug_config.max_resample_attempts):
+            aug_params = sample_augmentation_params(self.aug_config, self._aug_rng)
+            aug_events, aug_M = apply_augmentation(
+                list(self.events), self._M_np, aug_params, self._aug_rng
+            )
+            if len(aug_events) >= self.aug_config.min_events:
+                self.events = aug_events
+                self._current_aug_params = aug_params
+                # Recompute host_to_mhds from augmented topology
+                for h in range(self.pod_size):
+                    self.host_to_mhds[h] = [
+                        j for j in range(self.num_mhd) if aug_M[h, j] != 0
+                    ]
+                return
+
+        # All attempts failed guard — use unaugmented episode, reset topology
+        self._current_aug_params = {
+            "scale": 1.0, "noise_sigma": 0.0, "jitter": 0,
+            "lifetime_frac": 0.0, "fail_ratio": 0.0,
+        }
+        for h in range(self.pod_size):
+            self.host_to_mhds[h] = [
+                j for j in range(self.num_mhd) if self.M[h][j] != 0
+            ]
+
+    # ------------------------------------------------------------------
+    def _switch_trace(self, trace_data):
+        """Swap trace data for multi-trace augmentation.
+
+        trace_data: tuple (all_vms, node_to_vms, node_to_machine, vm_type_sz, machine_sz)
+        Precomputed event cache is NOT used with multi-trace (events built fresh).
+        """
+        self.all_vms = trace_data[0]
+        self.node_to_vms = trace_data[1]
+        self.node_to_machine = trace_data[2]
+        self.machine_sz = trace_data[4]
 
     # ------------------------------------------------------------------
     def _get_obs(self) -> np.ndarray:
