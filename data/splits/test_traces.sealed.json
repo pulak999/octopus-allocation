@@ -1,0 +1,11 @@
+{
+  "purpose": "SEALED test traces — do NOT read until Task 10 (final evaluation)",
+  "test_traces": [
+    "LVL01PrdApp05-troundgrt5m.sqlite",
+    "AMS20PrdApp19-tround.sqlite"
+  ],
+  "rationale": {
+    "LVL01PrdApp05": "Bursty extreme: 271k VMs, 118/tick arrival, 283-tick mean lifetime, 43% HOTFIX survival",
+    "AMS20PrdApp19": "Steady extreme: 34k VMs, 15/tick arrival, 1192-tick mean lifetime, highest rss1 mean (33k)"
+  }
+}

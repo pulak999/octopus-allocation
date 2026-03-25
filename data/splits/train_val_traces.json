@@ -1,0 +1,15 @@
+{
+  "val_traces": [
+    "YTO21PrdApp05-troundgrt5m.sqlite"
+  ],
+  "val_rationale": "Closest to median on all metrics: 80k VMs, 35/tick arrival, 737-tick lifetime, 76.5% survival",
+  "train_traces": [
+    "BLAPrdApp19-troundgrt5m.sqlite",
+    "BN9PrdApp18-troundgrt5m.sqlite",
+    "DSM08PrdApp05-troundgrt5m.sqlite",
+    "DUB24PrdApp09-troundgrt5m.sqlite",
+    "LON23PrdApp01-troundgrt5m.sqlite",
+    "SG2PrdApp35-troundgrt5m.sqlite",
+    "SYD21PrdApp07-troundgrt5m.sqlite"
+  ]
+}
