@@ -77,6 +77,74 @@ class PoolingSavingsCallback(BaseCallback):
             )
 
 
+# ── SAC diagnostics callback ─────────────────────────────────────────────
+class SACDiagnosticsCallback(BaseCallback):
+    """Log SAC internals: entropy coefficient, Q-values, gradient norms."""
+
+    def __init__(self, log_freq=1000, verbose=0):
+        super().__init__(verbose)
+        self._log_freq = log_freq
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps % self._log_freq != 0:
+            return True
+
+        model = self.model
+        # Entropy coefficient (alpha)
+        if hasattr(model, "ent_coef_tensor"):
+            ent_coef = model.ent_coef_tensor.exp().item()
+            self.logger.record("sac/ent_coef", ent_coef)
+
+        # Q-value statistics from the last critic forward pass
+        if hasattr(model, "critic") and hasattr(model, "replay_buffer"):
+            try:
+                replay = model.replay_buffer
+                if replay.size() > model.batch_size:
+                    data = replay.sample(min(256, model.batch_size))
+                    with torch.no_grad():
+                        q1, q2 = model.critic(data.observations, data.actions)
+                    self.logger.record("sac/q1_mean", float(q1.mean()))
+                    self.logger.record("sac/q2_mean", float(q2.mean()))
+                    self.logger.record("sac/q1_std", float(q1.std()))
+                    self.logger.record("sac/q_spread", float((q1 - q2).abs().mean()))
+            except Exception:
+                pass  # skip if buffer not ready
+
+        # Gradient norms
+        for name, net in [("actor", getattr(model, "actor", None)),
+                          ("critic", getattr(model, "critic", None))]:
+            if net is None:
+                continue
+            total_norm = 0.0
+            for p in net.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item() ** 2
+            total_norm = total_norm ** 0.5
+            self.logger.record(f"sac/{name}_grad_norm", total_norm)
+
+        return True
+
+
+# ── Environment metrics callback ─────────────────────────────────────────
+class EnvMetricsCallback(BaseCallback):
+    """Log environment-specific metrics from the info dict at episode end."""
+
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "pooling_ratio" in info:
+                self.logger.record("env/pooling_ratio", info["pooling_ratio"])
+                self.logger.record("env/pooling_savings", info.get("pooling_savings", 0.0))
+            if "max_peak" in info:
+                self.logger.record("env/max_peak", info["max_peak"])
+            if "num_events" in info:
+                self.logger.record("env/num_events", info["num_events"])
+        return True
+
+
 # ── Augmentation logging callback ─────────────────────────────────────────
 class AugmentationLogCallback(BaseCallback):
     """Log augmentation parameter diversity during training."""
@@ -84,13 +152,20 @@ class AugmentationLogCallback(BaseCallback):
     def __init__(self, log_freq=500, verbose=0):
         super().__init__(verbose)
         self._scales = []
+        self._link_failures = 0
+        self._trace_ids = []
         self._log_freq = log_freq
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
         for info in infos:
             if "aug_params" in info:
-                self._scales.append(info["aug_params"]["scale"])
+                params = info["aug_params"]
+                self._scales.append(params["scale"])
+                if params.get("fail_ratio", 0.0) > 0:
+                    self._link_failures += 1
+            if "trace_id" in info:
+                self._trace_ids.append(info["trace_id"])
 
         if len(self._scales) >= self._log_freq:
             scales = np.array(self._scales[-self._log_freq:])
@@ -98,7 +173,12 @@ class AugmentationLogCallback(BaseCallback):
             self.logger.record("aug/scale_std", float(scales.std()))
             self.logger.record("aug/scale_min", float(scales.min()))
             self.logger.record("aug/scale_max", float(scales.max()))
+            self.logger.record("aug/link_failures_applied", self._link_failures)
+            if self._trace_ids:
+                self.logger.record("aug/unique_traces", len(set(self._trace_ids)))
             self._scales = []
+            self._link_failures = 0
+            self._trace_ids = []
         return True
 
 
@@ -183,6 +263,16 @@ def main():
         help="Skip the HOTFIX VM filter in event construction. "
         "Use for CXL pooling training where per-node DRAM caps don't apply.",
     )
+    ap.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging",
+    )
+    ap.add_argument(
+        "--wandb-project",
+        default="cxl-memory-pooling",
+        help="W&B project name (default: cxl-memory-pooling)",
+    )
 
     # ── Augmentation args ─────────────────────────────────────────────
     aug_group = ap.add_argument_group("augmentation")
@@ -228,6 +318,19 @@ def main():
     log_dir = os.path.join("output", "logs", args.run_id)
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
+
+    # ── W&B init ───────────────────────────────────────────────────────
+    wandb_run = None
+    if args.wandb:
+        import wandb
+        from wandb.integration.sb3 import WandbCallback
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.run_id,
+            config=vars(args),
+            sync_tensorboard=True,
+        )
+        print(f"W&B run: {wandb_run.url}")
 
     # ── Save config ───────────────────────────────────────────────────
     import datetime
@@ -364,14 +467,25 @@ def main():
             **common_kw,
         )
 
+    # ── Build callback list ──────────────────────────────────────────
+    callbacks = [checkpoint_cb, eval_cb, pooling_cb, EnvMetricsCallback()]
+    if args.algo == "sac":
+        callbacks.append(SACDiagnosticsCallback(log_freq=1000))
+    if aug_config:
+        callbacks.append(AugmentationLogCallback(log_freq=500))
+    if wandb_run is not None:
+        callbacks.append(WandbCallback(
+            model_save_path=save_dir,
+            model_save_freq=args.checkpoint_freq,
+            verbose=0,
+        ))
+
     # ── Train ─────────────────────────────────────────────────────────
     print(f"\nTraining {args.algo.upper()} [{args.run_id}] for "
           f"{args.total_timesteps:,} timesteps …\n")
     model.learn(
         total_timesteps=args.total_timesteps,
-        callback=[checkpoint_cb, eval_cb, pooling_cb] + (
-            [AugmentationLogCallback(log_freq=500)] if aug_config else []
-        ),
+        callback=callbacks,
         progress_bar=True,
     )
 
@@ -379,6 +493,9 @@ def main():
     final_path = os.path.join(save_dir, f"octopus_{args.algo}_final")
     model.save(final_path)
     print(f"\n✓  Final model saved → {final_path}")
+
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":
