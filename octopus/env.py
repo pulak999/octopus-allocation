@@ -358,6 +358,8 @@ class OctopusMemPoolEnv(gym.Env):
                 vm = self.all_vms[vmkey]
                 vm_s = to_tick(vm.start_time) - pod_start_ts
                 vm_e = to_tick(vm.end_time) - pod_start_ts
+                if vm_e < 0:
+                    continue  # VM ends before pod window — always skip
                 mem = float(np.asarray(vm.rss, dtype=float)[self.mem_idx])
                 if mem <= 0:
                     continue
