@@ -20,7 +20,7 @@ import sys
 import numpy as np
 
 from octopus.data import load_trace, load_topology
-from octopus.baselines import greedy_alloc
+from octopus.baselines import greedy_alloc, pid_alloc
 from octopus.topology import (
     generate_pod_to_nodes,
     expand_M_to_all_nodes,
@@ -92,6 +92,30 @@ def pooling_simulation(
     if pod_dur <= 0:
         return 0.0
 
+    # C4: Extract ctx constants as locals to avoid redundant attribute lookups
+    _pod_start_ts = pod_start_ts
+    _base = base
+    _num_mhd = num_mhd
+    _pod_rss_mem = float(pod_rss[MEM_IDX])
+
+    # C1: Precompute mhd_list per node once (not per VM per tick)
+    node_mhd_lists = {
+        node_id: [mhd for mhd in range(num_mhd) if M[node_id][mhd] != 0]
+        for node_id in range(len(M))
+    }
+
+    # C2: Cache VM tick bounds and memory upfront
+    base_sec = base.timestamp()
+    vm_cache = {}  # vmkey -> (vm_tick_start, vm_tick_end, mem_gb)
+    for cur_node in node_to_M.keys():
+        for cur_vmkey in node_to_vms.get(cur_node, []):
+            if cur_vmkey not in vm_cache:
+                cur_vm = all_vms[cur_vmkey]
+                vm_tick_start = int((cur_vm.start_time.timestamp() - base_sec) // 300) - pod_start_ts
+                vm_tick_end = int((cur_vm.end_time.timestamp() - base_sec) // 300) - pod_start_ts
+                mem_gb = float(np.asarray(cur_vm.rss, dtype=float)[MEM_IDX])
+                vm_cache[cur_vmkey] = (vm_tick_start, vm_tick_end, mem_gb)
+
     # 2) HOTFIX: filter VMs that would exceed per-node memory
     vmkey_to_skip: set = set()
     for cur_node in node_to_M.keys():
@@ -102,14 +126,10 @@ def pooling_simulation(
         )
 
         for cur_vmkey in node_to_vms.get(cur_node, []):
-            cur_vm = all_vms[cur_vmkey]
-            vm_start = to_tick(cur_vm.start_time) - pod_start_ts
-            vm_end = to_tick(cur_vm.end_time) - pod_start_ts
+            vm_start, vm_end, mem = vm_cache[cur_vmkey]
             if vm_end < 0:
                 vmkey_to_skip.add(cur_vmkey)
                 continue
-            vm_rss_vec = np.asarray(cur_vm.rss, dtype=float)
-            mem = float(vm_rss_vec[MEM_IDX])
             alloc_events[vm_start].append((cur_vmkey, vm_end + 1, mem))
             if vm_end + 1 < pod_dur:
                 dealloc_events_node[vm_end + 1] += mem
@@ -127,45 +147,52 @@ def pooling_simulation(
                     if end_ts < pod_dur:
                         dealloc_events_node[end_ts] -= mem
 
-    # 3) Build per-tick arrival events
-    alloc_events_sim = [[] for _ in range(pod_dur)]
+    # 3) Build flat sorted event list instead of list-of-lists (C3)
+    flat_events = []
     for cur_node, node_in_pod_id in node_to_M.items():
         for cur_vmkey in node_to_vms.get(cur_node, []):
             if cur_vmkey in vmkey_to_skip:
                 continue
-            cur_vm = all_vms[cur_vmkey]
-            vm_start = to_tick(cur_vm.start_time) - pod_start_ts
-            vm_end = to_tick(cur_vm.end_time) - pod_start_ts
-            vm_rss_vec = np.asarray(cur_vm.rss, dtype=float)
-            alloc_events_sim[vm_start].append(
-                (node_in_pod_id, vm_end + 1, vm_rss_vec)
-            )
+            vm_start, vm_end, mem = vm_cache[cur_vmkey]
+            flat_events.append((vm_start, node_in_pod_id, vm_end + 1, mem))
+    flat_events.sort(key=lambda e: e[0])
 
-    # 4) Sweep ticks — allocate using alloc_fn
+    # 4) Sweep ticks — allocate using alloc_fn (C3: only visit ticks with events)
     cur_cxl_mem_vec = np.zeros(num_mhd, dtype=float)
     max_cxl_mem_vec = np.zeros(num_mhd, dtype=float)
     dealloc_events = np.zeros((pod_dur, num_mhd), dtype=float)
 
-    for i, cur_event_list in enumerate(alloc_events_sim):
-        cur_cxl_mem_vec -= dealloc_events[i, :]
+    prev_tick = -1
+    evt_idx = 0
+    n_events = len(flat_events)
+
+    while evt_idx < n_events:
+        tick = flat_events[evt_idx][0]
+
+        # Apply deallocs for all skipped ticks up to and including current tick
+        if tick > prev_tick + 1:
+            cur_cxl_mem_vec -= dealloc_events[prev_tick + 1:tick + 1, :].sum(axis=0)
+        else:
+            cur_cxl_mem_vec -= dealloc_events[tick, :]
         cur_cxl_mem_vec = np.maximum(cur_cxl_mem_vec, 0.0)
 
-        for node_in_pod_id, dealloc_time, cur_event in cur_event_list:
-            mem = float(cur_event[MEM_IDX])
+        # Process all events at this tick
+        while evt_idx < n_events and flat_events[evt_idx][0] == tick:
+            _, node_in_pod_id, dealloc_time, mem = flat_events[evt_idx]
+            evt_idx += 1
+
             if mem <= 0:
                 continue
 
-            mhd_list = [
-                mhd for mhd in range(num_mhd) if M[node_in_pod_id][mhd] != 0
-            ]
+            mhd_list = node_mhd_lists[node_in_pod_id]
             assert len(mhd_list) != 0
 
             ctx = {
-                "tick": i,
-                "pod_start_ts": pod_start_ts,
-                "base_time": base,
-                "num_mhd": num_mhd,
-                "pod_rss_mem": float(pod_rss[MEM_IDX]),
+                "tick": tick,
+                "pod_start_ts": _pod_start_ts,
+                "base_time": _base,
+                "num_mhd": _num_mhd,
+                "pod_rss_mem": _pod_rss_mem,
             }
 
             alloc_vec = np.asarray(
@@ -175,11 +202,12 @@ def pooling_simulation(
 
             cur_cxl_mem_vec += alloc_vec
 
-            assert dealloc_time > i
+            assert dealloc_time > tick
             if dealloc_time < pod_dur:
                 dealloc_events[dealloc_time, :] += alloc_vec
 
         max_cxl_mem_vec = np.maximum(max_cxl_mem_vec, cur_cxl_mem_vec)
+        prev_tick = tick
 
     denom = float(pod_rss[MEM_IDX])
     if denom <= 0:
@@ -193,6 +221,17 @@ def pooling_simulation(
 def _greedy_alloc_cb(cxl_mem, mhd_list, cur_cxl_mem_vec, ctx):
     """Greedy callback (wraps baselines.greedy_alloc)."""
     return greedy_alloc(cxl_mem, mhd_list, cur_cxl_mem_vec)
+
+
+def make_pid_alloc_cb(kp=1.0, ki=0.01, kd=0.1):
+    """Return a fresh PID callback (new pid_state per call → reset per pod mapping)."""
+    pid_state = {}
+
+    def _pid_alloc_cb(cxl_mem, mhd_list, cur_cxl_mem_vec, ctx):
+        return pid_alloc(cxl_mem, mhd_list, cur_cxl_mem_vec, pid_state,
+                         kp=kp, ki=ki, kd=kd)
+
+    return _pid_alloc_cb
 
 
 def make_rl_alloc_cb(model, max_degree):
@@ -248,19 +287,24 @@ def make_rl_alloc_cb(model, max_degree):
 # ═══════════════════════════════════════════════════════════════════════
 #  Main evaluation loop (mirrors notebook cells 14-16)
 # ═══════════════════════════════════════════════════════════════════════
-def run_eval(policy_name, alloc_fn, matrix, trace_data, n_iter=50):
-    """Run *n_iter* random pod mappings, print summary statistics."""
+def run_eval(policy_name, alloc_fn, matrix, trace_data, n_iter=50, alloc_fn_factory=None):
+    """Run *n_iter* random pod mappings, print summary statistics.
+
+    If *alloc_fn_factory* is provided it is called once per iteration (with no
+    arguments) to produce a fresh alloc_fn — needed for stateful policies like PID.
+    """
     all_vms, node_to_vms, node_to_machine, _vtsz, machine_sz = trace_data
 
     result_list = []
     for i in range(n_iter):
         print(f"\r  {policy_name}: iteration {i}/{n_iter}", end="", flush=True)
+        fn = alloc_fn_factory() if alloc_fn_factory is not None else alloc_fn
         pod_to_nodes = generate_pod_to_nodes(
             node_to_vms, len(matrix), 10086 + i
         )
         node_to_M, expanded_M = expand_M_to_all_nodes(matrix, pod_to_nodes)
         ratio = pooling_simulation(
-            node_to_M, expanded_M, alloc_fn,
+            node_to_M, expanded_M, fn,
             all_vms, node_to_vms, node_to_machine, machine_sz,
         )
         result_list.append(1.0 - ratio)
@@ -287,9 +331,12 @@ def main():
         "--policy",
         nargs="+",
         default=["greedy", "rl"],
-        choices=["greedy", "rl"],
+        choices=["greedy", "rl", "pid"],
         help="Policies to evaluate",
     )
+    ap.add_argument("--kp", type=float, default=1.0, help="PID proportional gain")
+    ap.add_argument("--ki", type=float, default=0.01, help="PID integral gain")
+    ap.add_argument("--kd", type=float, default=0.1, help="PID derivative gain")
     ap.add_argument(
         "--trace",
         default="AMS20PrdApp19-tround.sqlite",
@@ -300,8 +347,8 @@ def main():
     )
     ap.add_argument(
         "--model",
-        default="output/checkpoints/octopus_sac_final",
-        help="Path to trained SB3 model (for --policy rl)",
+        default=None,
+        help="Path to trained SB3 model (required when --policy includes rl)",
     )
     ap.add_argument("--n-iter", type=int, default=50)
     args = ap.parse_args()
@@ -327,12 +374,36 @@ def main():
     # ── RL ───────────────────────────────────────────────────────────
     if "rl" in args.policy:
         from stable_baselines3 import SAC
+        import hashlib
 
-        print(f"Loading RL model: {args.model} …")
+        if args.model is None:
+            ap.error("--model is required when --policy includes rl")
+
+        model_path = os.path.abspath(args.model)
+        # Append .zip if needed (SB3 convention)
+        check_path = model_path if os.path.exists(model_path) else model_path + ".zip"
+        if not os.path.exists(check_path):
+            ap.error(f"Model file not found: {check_path}")
+        md5 = hashlib.md5(open(check_path, "rb").read()).hexdigest()
+        print(f"Loading RL model: {check_path}")
+        print(f"  md5: {md5}")
         model = SAC.load(args.model)
         rl_cb = make_rl_alloc_cb(model, max_deg)
         results["rl"] = run_eval(
             "RL (SAC)", rl_cb, M, trace_data, args.n_iter
+        )
+
+    # ── PID ──────────────────────────────────────────────────────────
+    if "pid" in args.policy:
+        results["pid"] = run_eval(
+            "PID",
+            alloc_fn=None,
+            matrix=M,
+            trace_data=trace_data,
+            n_iter=args.n_iter,
+            alloc_fn_factory=lambda: make_pid_alloc_cb(
+                kp=args.kp, ki=args.ki, kd=args.kd
+            ),
         )
 
     # ── Summary ──────────────────────────────────────────────────────

@@ -1,37 +1,40 @@
 \documentclass[11pt]{article}
+
+% packages
 \usepackage[margin=1in]{geometry}
-\usepackage{amsmath, amssymb}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{listings}
-\usepackage{xcolor}
 
+% listings style
 \definecolor{codegreen}{rgb}{0,0.6,0}
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
 \definecolor{codepurple}{rgb}{0.58,0,0.82}
 \definecolor{backcolour}{rgb}{0.95,0.95,0.92}
 
 \lstdefinestyle{mystyle}{
-    backgroundcolor=\color{backcolour},   
-    commentstyle=\color{codegreen},
-    keywordstyle=\color{magenta},
-    numberstyle=\tiny\color{codegray},
-    stringstyle=\color{codepurple},
-    basicstyle=\ttfamily\footnotesize,
-    breakatwhitespace=false,         
-    breaklines=true,                 
-    captionpos=b,                    
-    keepspaces=true,                 
-    numbers=left,                    
-    numbersep=5pt,                  
-    showspaces=false,                
-    showstringspaces=false,
-    showtabs=false,                  
-    tabsize=2
+  backgroundcolor=\color{backcolour},
+  commentstyle=\color{codegreen},
+  keywordstyle=\color{magenta},
+  numberstyle=\tiny\color{codegray},
+  stringstyle=\color{codepurple},
+  basicstyle=\ttfamily\footnotesize,
+  breakatwhitespace=false,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=5pt,
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2
 }
 \lstset{style=mystyle}
 
-\title{Hardware-Accelerated Reinforcement Learning Simulator for Octopus CXL Memory Pooling}
+\title{Hardware-Efficient Reinforcement Learning for Octopus CXL Memory Pooling}
 \author{Pulak Mehrotra}
 \date{\today}
 
@@ -40,65 +43,222 @@
 \maketitle
 
 \begin{abstract}
-The current trace-driven Octopus simulator relies on sequential, CPU-bound execution, limiting the sample efficiency of Reinforcement Learning (RL) agents such as Soft Actor-Critic (SAC)[cite: 324, 348]. To effectively train policies capable of anticipating diurnal cloud workloads [cite: 128] and transitioning to online Locally Constrained Policy Optimization (LCPO)[cite: 339], the environment must be highly parallelized. This proposal outlines the transition to a JAX-based, fully tensorized simulation architecture deployed across a 3x TITAN RTX GPU cluster, enabling millions of simulated transitions per second.
+The current trace-driven Octopus simulator achieves fast per-step execution
+($\sim$10,000 steps/sec) but suffers from low end-to-end training throughput
+($\sim$450 steps/sec) due to Python overhead and inefficient batching in the
+reinforcement learning loop. This results in severe underutilization of
+available GPU resources.
+
+This proposal outlines a systems-driven redesign of the RL training
+pipeline, beginning with single-GPU saturation through batched rollouts and
+training, followed by a transition to a fully tensorized JAX-based simulator
+and eventual multi-GPU scaling. The goal is to reach Isaac-style performance
+regimes (10k--100k+ steps/sec) while preserving the fidelity of trace-driven
+cloud workloads.
 \end{abstract}
 
-\section{Phase 1: Stateless Functional Representation (JAX PyTrees)}
-Standard object-oriented environment states inherently bottleneck hardware acceleration. In JAX, the simulation state must be immutable and represented as a PyTree. For the target 96-host Acadia pod [cite: 538] connected to $m=120$ Multi-Ported CXL Devices (MPDs)[cite: 538], the global state is defined without batch dimensions, allowing JAX to handle vectorization natively.
+\section{Phase 0: Empirical Bottleneck Analysis}
 
-\begin{lstlisting}[language=Python, caption=JAX PyTree State Definition]
-import jax.numpy as jnp
-from flax import struct
+We profile the current Stable-Baselines3 (SB3)-based training pipeline on a
+single NVIDIA TITAN RTX.
 
-@struct.dataclass
-class OctopusState:
-    mpd_loads: jnp.ndarray       # Shape: (120,) - Load per MPD
-    active_vms: jnp.ndarray      # Shape: (Max_VMs, 3) - [host_id, mpd_id, size]
-    current_tick: jnp.int32      # Scalar - Time step in the 14-day trace
+\textbf{Measured performance:}
+\begin{itemize}
+    \item Environment step time: $\approx 0.1$ ms ($\sim$10,000 steps/sec)
+    \item Training throughput: $\approx 450$ steps/sec
+    \item GPU utilization: $<10\%$
+\end{itemize}
+
+\textbf{Key observation:} The environment is already sufficiently fast and does
+not constitute the primary bottleneck. Instead, the training loop is dominated
+by Python overhead and inefficient batching.
+
+\textbf{Root causes:}
+\begin{itemize}
+    \item Single-environment rollout (no parallelism)
+    \item Per-step Python control flow
+    \item Small, infrequent GPU workloads (low duty cycle)
+\end{itemize}
+
+This results in a $\sim$10--20$\times$ gap between observed throughput and
+hardware capability.
+
+\textbf{Conclusion:} Multi-GPU scaling is premature. The immediate objective is
+to saturate a single GPU.
+
+\section{Phase 1: Batched Rollout and Training (Single GPU)}
+
+To eliminate Python overhead and improve GPU utilization, the training
+pipeline must operate on batched environment rollouts.
+
+\textbf{Vectorized environments.}
+We run $N$ environments in parallel:
+
+\begin{equation}
+  s_t \in \mathbb{R}^{N \times d}
+\end{equation}
+
+where $N \in [4, 32]$.
+
+\textbf{Batched policy inference.}
+The policy network processes all observations simultaneously:
+
+\begin{equation}
+  a_t = \pi_\theta(s_t)
+\end{equation}
+
+This converts many small GPU calls into a single large kernel.
+
+\textbf{Decoupled rollout and training.}
+Instead of updating every step, for SAC we set:
+
+\begin{itemize}
+    \item \texttt{train\_freq} $= N$ (collect $N$ steps before any gradient update)
+    \item \texttt{gradient\_steps} $= N$ (match the collection rate)
+    \item \texttt{batch\_size} $= 512$ (larger GPU kernel per update)
+\end{itemize}
+
+For PPO, the effective rollout buffer grows automatically to $N \times n\_\text{steps}$
+and the minibatch size is scaled as $\min(N \times 64, 2048)$.
+
+\textbf{Precomputed episode events.}
+A significant hidden cost is \texttt{env.reset()}: each episode start
+triggers $O(|\text{VMs}|)$ work to filter and sort VM arrivals for the
+randomly selected pod.  With $N$ parallel environments resetting independently,
+this cost multiplies.  We address it by precomputing all event lists offline:
+
+\begin{lstlisting}[language=Python, caption=Precomputed event cache]
+from octopus.data import precompute_pod_events
+
+seeds = [base_seed + i for i in range(n_envs * max_episodes)]
+precomputed = precompute_pod_events(trace_data, M, seeds)
+# env.reset() now does a dict lookup instead of O(|VMs|) work
 \end{lstlisting}
 
-\section{Phase 2: Tensorized Environment Dynamics}
-The core memory allocation logic must be rewritten as pure linear algebra. When a VM arrives at host $S_i$, the RL policy maps the system state to an allocation vector $a \in \mathbb{R}_{\ge0}^{m}$[cite: 31]. The graph sparsity dictates that $a_j = 0$ if the adjacency matrix $M_{ij} = 0$[cite: 30, 33].
+\textbf{Implementation.}
+Three files were changed:
+\begin{itemize}
+    \item \texttt{octopus/data.py} — \texttt{precompute\_pod\_events()} function
+    \item \texttt{octopus/env.py} — \texttt{precomputed\_events} parameter; \texttt{\_load\_precomputed()} fast path in \texttt{reset()}
+    \item \texttt{scripts/train.py} — \texttt{--n-envs} argument; \texttt{SubprocVecEnv} when $N > 1$; scaled SAC/PPO hyperparameters
+\end{itemize}
 
-In the JAX environment step, this hard constraint is enforced by applying a logarithmic mask prior to the softmax normalization:
+\textbf{Measured results on a single NVIDIA TITAN RTX.}
+Benchmarks run using \texttt{tests/napkin\_math.py} (5,000-step runs, SAC,
+\texttt{net\_arch=[128,128]}, trace: AMS20PrdApp19).
 
-\begin{equation}
-    \tilde{w}_j = 
-    \begin{cases} 
-      w_j & \text{if } M_{ij} = 1 \\
-      -\infty & \text{if } M_{ij} = 0 
-    \end{cases}
-\end{equation}
+\begin{center}
+\begin{tabular}{lrr}
+\hline
+\textbf{Configuration} & \textbf{Steps/sec} & \textbf{Speedup} \\
+\hline
+Baseline ($N=1$, \texttt{tf}=1, \texttt{bs}=256) & 46  & 1.0$\times$ \\
+$N=1$, \texttt{tf}=16, \texttt{gs}=16, \texttt{bs}=512  & 50  & 1.1$\times$ \\
+$N=4$,  \texttt{SubprocVecEnv}              & 191 & 4.1$\times$ \\
+$N=8$,  \texttt{SubprocVecEnv}              & 369 & 8.0$\times$ \\
+$N=16$, \texttt{SubprocVecEnv}              & 657 & 14.2$\times$ \\
+$N=32$, \texttt{SubprocVecEnv}              & 1221 & \textbf{26.5$\times$} \\
+\hline
+\end{tabular}
+\end{center}
 
-\begin{equation}
-    a_j = x \cdot \frac{\exp(\tilde{w}_j)}{\sum_{k=1}^m \exp(\tilde{w}_k)}
-\end{equation}
+Reset time improves from $\sim$120\,ms to $\sim$7\,ms (16.6$\times$) with
+precomputed events.
 
-This operation executes via element-wise matrix multiplication, eliminating iterative masking loops and allowing constant-time execution on the GPU.
+\textbf{Key observation.}
+Increasing \texttt{train\_freq} and \texttt{batch\_size} alone (without
+additional environments) yields no measurable gain ($\sim$1$\times$).
+The bottleneck is Python/CPU throughput, not GPU kernel size.
+Parallelism via \texttt{SubprocVecEnv} scales near-linearly up to $N=32$.
 
-\section{Phase 3: Zero-Copy Trace Execution}
-The production VM traces from Azure datacenters (e.g., AMS20, LON23) span approximately 14 days at a 5-minute resolution[cite: 107, 127]. To prevent PCIe bandwidth from throttling the simulation, the entire trace dataset is pre-compiled into a static three-dimensional tensor: $\mathcal{T} \in \mathbb{R}^{T \times n \times F}$, where $T = 4032$ (ticks), $n = 96$ (hosts), and $F$ represents features like VM size and lifetime[cite: 279]. 
+\textbf{Achieved improvement.}
+Throughput increases from $\sim$46 steps/sec to $\sim$1,220 steps/sec
+($\approx$26$\times$) on a single TITAN RTX with $N=32$ workers.
+The \texttt{--fast} flag in \texttt{train.py} now defaults to $N=32$.
 
-Prior to training, $\mathcal{T}$ is pinned directly to the TITAN RTX VRAM. During the environment \texttt{step()}, the \texttt{jax.lax.dynamic\_slice} primitive fetches the incoming demand for \texttt{state.current\_tick} entirely within silicon, achieving zero-copy data loading.
+\section{Phases 2--4: Empirical Assessment (JAX Rewrite)}
 
-\section{Phase 4: Multi-GPU Scaling Strategy (3x TITAN RTX)}
-To exploit the 72GB of aggregate VRAM across the 3x TITAN RTX cluster, the single-pod \texttt{step()} function is transformed using JAX's composable parallelization primitives.
+Phases 2--4 originally proposed rewriting the environment in JAX with
+immutable PyTree state, tensorized dynamics, and zero-copy GPU trace
+execution.  Before committing to this effort, we benchmarked the system
+at 60$\times$ scale (all 10 available traces, $\sim$1.1M VMs total) to
+determine whether new bottlenecks would emerge that these phases address.
 
-Let $B_{gpu}$ denote the maximum number of parallel pods that fit within the 24GB VRAM of a single TITAN RTX (estimated $B_{gpu} \approx 4096$). 
+\textbf{Measured results at 60$\times$ scale.}
+Benchmarks run using \texttt{tests/napkin\_math.py --scale-test}.
+
+\begin{center}
+\begin{tabular}{lrr}
+\hline
+\textbf{Metric} & \textbf{Value} & \textbf{Notes} \\
+\hline
+Total VMs (10 traces)            & 1,098,278    & 32$\times$ single trace \\
+Trace load time (total)          & $\sim$371\,s & One-time startup cost \\
+Precompute time per seed         & 115--244\,ms & Scales with \# VMs \\
+\texttt{dealloc\_events} RAM (N=32)& 113\,MB    & Fixed by topology, not data size \\
+Throughput, single trace (N=32)  & 1,225\,steps/s & \\
+Throughput, all 10 traces (N=32) & 1,022\,steps/s & 16.6\% IPC overhead \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{Assessment of each proposed phase.}
+
+\textit{Phase 2 (JAX PyTrees).}
+JAX's benefit is eliminating Python dispatch overhead on the per-step hot
+path.  However, the env step is already 0.1\,ms and is not the bottleneck
+--- the bottleneck is SubprocVecEnv IPC.  JAX cannot reduce IPC cost.
+Furthermore, the variable-length, sparse VM arrival structure is hostile
+to fixed-shape JAX arrays: a padded \texttt{active\_vms} tensor would
+waste compute proportional to worst-case episode length.
+\textbf{Not recommended.}
+
+\textit{Phase 3 (Tensorized dynamics).}
+The masked-softmax allocation in \texttt{env.step()} is already 5 lines
+of NumPy taking $<$0.02\,ms.  The remaining loop in
+\texttt{\_process\_departures\_through()} is sparse and would require
+worst-case padding to tensorize.  Potential saving: $<$1\%.
+\textbf{Not recommended.}
+
+\textit{Phase 4 (Zero-copy GPU trace).}
+There is no CPU$\to$GPU trace transfer to eliminate: the env is pure CPU/NumPy.
+Preloading the trace into GPU memory ($\mathcal{T} \in \mathbb{R}^{T \times n \times F}$)
+would require fully GPU-resident dynamics (Phase 2+3 prerequisite) and would
+consume several GB of VRAM per trace.
+\textbf{Not recommended.}
+
+\textbf{Actual bottleneck at 60$\times$ scale: startup time.}
+The dominant cost is trace deserialization: 6 minutes to load all 10 traces
+cold.  This is a one-time cost per training run, but it is the largest
+single friction point.  The correct intervention is lazy loading (each
+worker loads only its assigned trace) rather than a JAX rewrite.
+
+\section{Phase 5: Multi-GPU Scaling (3x TITAN RTX)}
+
+After saturating a single GPU, we scale via hierarchical parallelism.
 
 \begin{lstlisting}[language=Python, caption=Hierarchical Parallelization]
 import jax
 
-# 1. Intra-GPU Vectorization: Simulates B_gpu pods concurrently
 vmapped_step = jax.vmap(step_fn, in_axes=(0, 0))
-
-# 2. Inter-GPU Parallelization: Distributes across 3 GPUs
-# Total parallel simulations = 3 * B_gpu
-parallel_env_step = jax.pmap(vmapped_step, in_axes=(0, 0))
+parallel_step = jax.pmap(vmapped_step, in_axes=(0, 0))
 \end{lstlisting}
 
+\textbf{Important:} Multi-GPU scaling is only effective once a single GPU is
+saturated. Otherwise, additional GPUs remain idle.
 
+\textbf{Expected scale:}
+\begin{itemize}
+    \item Single GPU: 10k--50k steps/sec
+    \item 3 GPUs: 30k--150k steps/sec
+\end{itemize}
 
-This hierarchical scaling ensures that the SAC agent experiences a massively diverse set of diurnal permutations [cite: 128, 131] and randomized link failures [cite: 519] simultaneously, stabilizing the policy gradient and closing the gap against the optimal offline baseline[cite: 524].
+\section{Conclusion}
+
+The primary bottleneck in the current system is not simulation speed but
+inefficient training pipeline design. By restructuring the rollout and
+training loop to operate on large batches, we unlock an order-of-magnitude
+improvement on a single GPU. Only after achieving high utilization does it
+become meaningful to pursue JAX compilation and multi-GPU scaling.
 
 \end{document}
