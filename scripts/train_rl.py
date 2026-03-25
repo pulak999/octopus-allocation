@@ -23,7 +23,7 @@ from stable_baselines3.common.callbacks import (
     CheckpointCallback,
     EvalCallback,
 )
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from octopus.data import load_trace, load_topology
 from octopus.env import OctopusMemPoolEnv
@@ -251,6 +251,17 @@ def main():
         default=0.5,
         help="Weight on MPD load variance penalty in reward (0 = no penalty)",
     )
+    ap.add_argument("--n-envs", type=int, default=1,
+                    help="Number of parallel environments (1=DummyVecEnv, >1=SubprocVecEnv)")
+    ap.add_argument(
+        "--traces", nargs="+", default=None,
+        help="Multiple training traces (cycled across envs). Overrides --trace.",
+    )
+    ap.add_argument(
+        "--no-train",
+        action="store_true",
+        help="Skip training; run random policy for --total-timesteps steps and report mean reward.",
+    )
     ap.add_argument(
         "--fast",
         action="store_true",
@@ -392,12 +403,33 @@ def main():
                 trace_pool.append(_lt(tn))
             print(f"  Loaded {len(trace_pool)} traces into pool")
 
+    # ── Load multiple traces if --traces given ──────────────────────
+    all_trace_data = []
+    if args.traces:
+        for tn in args.traces:
+            if not tn.endswith(".sqlite"):
+                tn = tn + ".sqlite"
+            print(f"Loading training trace: {tn} …")
+            all_trace_data.append(load_trace(tn))
+        print(f"  {len(all_trace_data)} training traces loaded")
+    else:
+        all_trace_data.append(trace_data)
+
     # ── Environments ──────────────────────────────────────────────────
-    train_env = DummyVecEnv([_make_env(trace_data, M, seed=args.seed,
-                                       variance_lambda=args.variance_lambda,
-                                       skip_hotfix=args.skip_hotfix,
-                                       aug_config=aug_config,
-                                       trace_pool=trace_pool)])
+    n_envs = args.n_envs
+    env_fns = []
+    for i in range(n_envs):
+        td = all_trace_data[i % len(all_trace_data)]
+        env_fns.append(_make_env(td, M, seed=args.seed + i,
+                                 variance_lambda=args.variance_lambda,
+                                 skip_hotfix=args.skip_hotfix,
+                                 aug_config=aug_config,
+                                 trace_pool=trace_pool))
+    if n_envs > 1:
+        train_env = SubprocVecEnv(env_fns)
+        print(f"SubprocVecEnv: {n_envs} parallel environments")
+    else:
+        train_env = DummyVecEnv(env_fns)
 
     print(f"Loading eval trace: {args.eval_trace} …")
     eval_trace_data = load_trace(args.eval_trace)
@@ -408,8 +440,12 @@ def main():
     )
 
     # ── Callbacks ─────────────────────────────────────────────────────
+    # SB3 callback freqs are in _on_step calls; with n_envs, each call = n_envs timesteps
+    eff_ckpt_freq = max(1, args.checkpoint_freq // n_envs)
+    eff_eval_freq = max(1, args.eval_freq // n_envs)
+
     checkpoint_cb = CheckpointCallback(
-        save_freq=args.checkpoint_freq,
+        save_freq=eff_ckpt_freq,
         save_path=save_dir,
         name_prefix=f"octopus_{args.algo}",
     )
@@ -417,7 +453,7 @@ def main():
         eval_env,
         best_model_save_path=save_dir,
         log_path=log_dir,
-        eval_freq=args.eval_freq,
+        eval_freq=eff_eval_freq,
         n_eval_episodes=1 if args.fast else 3,
         deterministic=True,
     )
@@ -480,6 +516,49 @@ def main():
             verbose=0,
         ))
 
+    # ── No-train mode: random policy baseline ───────────────────────
+    if args.no_train:
+        print(f"\n--no-train: running random policy for {args.total_timesteps:,} steps …")
+        obs = train_env.reset()
+        rewards = []
+        ep_reward = 0.0
+        for step in range(args.total_timesteps):
+            action = [train_env.action_space.sample() for _ in range(n_envs)]
+            obs, reward, done, info = train_env.step(action)
+            ep_reward += reward[0]
+            if done[0]:
+                rewards.append(ep_reward)
+                ep_reward = 0.0
+        if ep_reward != 0.0:
+            rewards.append(ep_reward)
+        rewards_arr = np.array(rewards) if rewards else np.array([0.0])
+        print(f"\nRandom policy baseline ({len(rewards)} episodes):")
+        print(f"  mean reward: {rewards_arr.mean():.4f}")
+        print(f"  std reward:  {rewards_arr.std():.4f}")
+        print(f"  min reward:  {rewards_arr.min():.4f}")
+        print(f"  max reward:  {rewards_arr.max():.4f}")
+        # Save results
+        import json as _json
+        result = {
+            "run_id": args.run_id,
+            "mode": "random_baseline",
+            "total_timesteps": args.total_timesteps,
+            "n_episodes": len(rewards),
+            "mean_reward": float(rewards_arr.mean()),
+            "std_reward": float(rewards_arr.std()),
+            "min_reward": float(rewards_arr.min()),
+            "max_reward": float(rewards_arr.max()),
+        }
+        result_path = os.path.join(save_dir, "random_baseline.json")
+        with open(result_path, "w") as f:
+            _json.dump(result, f, indent=2)
+        print(f"  Results saved → {result_path}")
+        train_env.close()
+        eval_env.close()
+        if wandb_run is not None:
+            wandb_run.finish()
+        return
+
     # ── Train ─────────────────────────────────────────────────────────
     print(f"\nTraining {args.algo.upper()} [{args.run_id}] for "
           f"{args.total_timesteps:,} timesteps …\n")
@@ -494,6 +573,8 @@ def main():
     model.save(final_path)
     print(f"\n✓  Final model saved → {final_path}")
 
+    train_env.close()
+    eval_env.close()
     if wandb_run is not None:
         wandb_run.finish()
 
