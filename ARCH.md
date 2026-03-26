@@ -69,15 +69,16 @@ Augmentation does NOT touch step logic, reward, observation space, or action spa
 
 ## Reward Function
 
-Current (single formula in `env.py` `step()`):
-```
-reward = -(new_peak - old_peak) / fair_share - λ * Var(mpd_loads)
-```
-- `fair_share = pod_dram / num_mhd`
-- `variance_lambda` (λ) is a CLI arg, default 0.5
+Three variants selected via `reward_variant` constructor param:
 
-Plan-v2 Task 9 will add alternative reward formulations (peak-only, post-alloc peak,
-CV-based, sparse). These will require parameterized reward selection in `step()`.
+- **"current"** (default): `-(Δpeak)/fair_share - λ·Var(loads)` — 20-dim obs
+- **"A"**: `R = -max(ĉ_j+(t) for j ∈ N(i))` — 50-dim obs
+- **"B"**: `R_A - λ · max(ĉ_j(t) for j ∉ N(i))` — 50-dim obs
+
+Where `ĉ_j(t) = (c_j(t) - D_j(t, W)) / D_pod` is the departure-adjusted projected load.
+`D_j(t, W)` is the time-weighted sum of memory from VMs departing within W steps.
+
+Reward A lies in (-1, 0]. Reward B lies in (-(1+λ), 0].
 
 ## Evaluation Metric
 
@@ -85,13 +86,32 @@ Primary metric: `pooling_ratio = max_peak * num_mhd / pod_dram` (lower = better)
 `savings = 1.0 - pooling_ratio`. Both are computed in `step()` info dict at episode end
 and in `eval_rl.py`.
 
-## Training Pipeline (plan-v2 additions)
+## Observation Space
+
+**"current" variant (20-dim):**
+`[loads(d_max), mask(d_max), vm_norm, peak_norm, hour_sin, hour_cos]`
+
+**"A" / "B" variants (50-dim for AG16x6, d_max=8):**
+Per-MPD slot k (×d_max): `[c_j/D_pod, D_j/D_pod, S_j/D_pod, mask, P_j/D_pod, Q_j]`
+Global: `[global_peak/D_pod, vm_mem/D_pod]`
+
+New state tracked in env.py for new variants:
+- `mpd_vm_allocs`: per-MPD list of `(dealloc_tick, mem_gb)` for active VMs
+- `cur_host_cxl_load`: per-host current CXL load (GB)
+- `host_dealloc_events`: per-host scheduled deallocations
+- `mhd_to_hosts`: inverse of host_to_mhds — MPD → list of connected hosts
+- `Q_j`: precomputed neighbor scarcity per MPD (static per topology, recomputed on link failure)
+
+**CRITICAL:** `make_rl_alloc_cb` in evaluate.py manually mirrors `_get_obs()`. Any obs layout
+change must be reflected in both.
+
+## Training Pipeline
 
 ```
 scripts/train_rl.py
-  → DummyVecEnv (N=1) or SubprocVecEnv (N=--n-envs)     [plan-v2]
-  → SAC or PPO model
+  → DummyVecEnv (N=1) or SubprocVecEnv (N=--n-envs)
+  → SAC model (--reward-variant current|A|B)
   → Callbacks: CheckpointCallback, EvalCallback, PoolingSavingsCallback,
-    AugmentationLogCallback (if aug), WandbCallback (if --wandb)     [plan-v2]
-  → W&B logging: SAC diagnostics, env metrics, aug params             [plan-v2]
+    AugmentationLogCallback (if aug), WandbCallback (if --wandb)
+  → W&B logging: SAC diagnostics, env metrics, aug params
 ```

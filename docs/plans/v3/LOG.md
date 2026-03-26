@@ -1,3 +1,51 @@
+## [2026-03-26] New State Space & Rewards — Task 4 (plan-v2)
+
+### Features Implemented
+- **Task 4a**: Per-MPD VM tracking (`mpd_vm_allocs`) and per-host CXL load tracking (`cur_host_cxl_load`, `host_dealloc_events`) in `OctopusMemPoolEnv`
+- **Task 4b**: Static topology precomputation — `mhd_to_hosts` (inverse of `host_to_mhds`) and `Q_j` (neighbour scarcity) via `_recompute_topology_derived()`; called from `__init__` and `_apply_augmentation` so Q_j stays correct after link failures
+- **Task 4c**: Two new reward variants — "A" (`-max(ĉ_j+)` over accessible MPDs) and "B" (A − λ·max global stress); "current" path unchanged; dispatch via `reward_variant` constructor param; `_compute_D_j(tick)` computes time-weighted departure relief
+- **Task 4d**: New 50-dim observation space (`6·d_max + 2`) for variants A/B — per-MPD slots `[c_j, D_j, S_j, mask, P_j, Q_j]/D_pod` plus global `[peak, vm_mem]/D_pod`; `observation_space` updated accordingly
+- **Task 4e**: CLI flags `--reward-variant {current,A,B}`, `--lookahead-window`, `--reward-lambda` in `train_rl.py`; `PoolingSavingsCallback` updated to precompute `mhd_to_hosts`/`Q_j` and pass to `make_rl_alloc_cb`
+- **Task 4f**: `pooling_simulation` in `evaluate.py` gains `track_vm_allocs=False` param; `make_rl_alloc_cb` gains `obs_variant`, `mhd_to_hosts`, `Q_j`, `lookahead_window` params; `eval_rl.py` gains `--reward-variant`, `--lookahead-window` flags with auto-detect from `config.json`
+- **Task 4g**: 20 tests in `tests/test_new_reward_obs.py` covering topology precomputation, VM tracking, obs shape, D_j formula, reward ranges, current-variant regression, mask/global feature correctness, and obs-sync between env and evaluate.py
+
+### Files Changed
+| File | What changed |
+|------|-------------|
+| `octopus/env.py` | New params (`reward_variant`, `lookahead_window`, `reward_lambda`), `mpd_vm_allocs`/`cur_host_cxl_load`/`host_dealloc_events` in reset, `_compute_D_j()`, `_recompute_topology_derived()`, updated `_get_obs()` and `_apply_augmentation()`, reward dispatch in `step()` |
+| `scripts/evaluate.py` | `pooling_simulation` + `track_vm_allocs` param, `make_rl_alloc_cb` new obs_variant/mhd_to_hosts/Q_j/lookahead_window params, 50-dim obs construction |
+| `scripts/train_rl.py` | Three new CLI flags, `_make_env` passes new params, `PoolingSavingsCallback` updated |
+| `scripts/eval_rl.py` | `--reward-variant`/`--lookahead-window` flags, config.json auto-detect, mhd_to_hosts/Q_j precomputation, `_eval_model_on_trace` updated |
+| `tests/test_new_reward_obs.py` | New file — 20 tests |
+| `TODO.md` | Tasks 4a–4g marked complete |
+| `ARCH.md` | Reward variants, observation space, CRITICAL sync note for make_rl_alloc_cb |
+
+### Functions Written
+| Function | File | Description |
+|----------|------|-------------|
+| `_compute_D_j` | `octopus/env.py` | Time-weighted departure relief per MPD within lookahead window |
+| `_recompute_topology_derived` | `octopus/env.py` | Builds mhd_to_hosts and Q_j from host_to_mhds |
+| `pooling_simulation` (updated) | `scripts/evaluate.py` | Added track_vm_allocs path for per-VM state |
+| `make_rl_alloc_cb` (updated) | `scripts/evaluate.py` | Builds 50-dim obs for variants A/B |
+| `_eval_model_on_trace` (updated) | `scripts/eval_rl.py` | Threads obs_variant/mhd_to_hosts/Q_j |
+| `test_obs_sync_initial_step` | `tests/test_new_reward_obs.py` | Verifies evaluate.py and env.py obs are identical at first event |
+
+### Data Structures Created
+| Name | File | Description |
+|------|------|-------------|
+| `mpd_vm_allocs` | `octopus/env.py` | `list[list[tuple[int, float]]]` — per-MPD list of (dealloc_tick, mem_gb) for active VMs |
+| `cur_host_cxl_load` | `octopus/env.py` | `np.ndarray(pod_size,)` — current CXL memory in-use per host |
+| `host_dealloc_events` | `octopus/env.py` | `np.ndarray(pod_dur, pod_size)` — scheduled per-host dealloc amounts by tick |
+| `mhd_to_hosts` | `octopus/env.py` | `dict[int, list[int]]` — inverse of host_to_mhds |
+| `Q_j` | `octopus/env.py` | `np.ndarray(num_mhd,)` — neighbour scarcity: mean(1/deg(h)) per MPD |
+
+### Notes
+- D_j is computed **pre-allocation** in `step()` so it reflects existing VMs only (not the just-arriving VM)
+- "current" variant obs/reward is unchanged — existing trained models remain compatible
+- The 50-dim obs formula matches between `_get_obs()` (env) and `make_rl_alloc_cb` (evaluate.py) — verified by `test_obs_sync_initial_step`
+- Tasks 5-7 are human-run (timing tests, overnight training, post-overnight evaluation)
+- No CI; all 90 tests pass locally
+
 ## [2026-03-24] Data Augmentation Implementation (plan-v1)
 
 ### Features Implemented

@@ -2,88 +2,90 @@
 
 Source: `docs/plans/v3/plan-v2.md`
 
-## Task 1 — Trace Characterization & Split Assignment
+## Completed
 
-- [ ] 1a. Add `--skip-hotfix` flag to `train_rl.py` and `eval_rl.py`; guard HOTFIX code behind it
-- [ ] 1b. Write trace characterization script (VM count, rss stats, lifetime stats, arrival rate, peak demand, event counts with/without HOTFIX)
-- [ ] 1c. Run characterization on all 10 traces, produce summary table
-- [ ] 1c. Assign train/val/test split (7/1/2); write `data/splits/test_traces.sealed.json` and `data/splits/train_val_traces.json`
+- [x] Task 1: Trace characterization + train/val/test split assignment
+- [x] Task 2: W&B integration (wandb.init, WandbCallback, SACDiagnosticsCallback, AugmentationLogCallback, EnvMetricsCallback)
+- [x] Task 3: Pre-training sanity checks (--no-train random baseline, overfit test, reward scale, aug smoke)
+- [x] `--skip-hotfix` flag in train_rl.py and eval_rl.py
+- [x] `--n-envs` + SubprocVecEnv in train_rl.py
+- [x] `--traces` (multi-trace per-env) in train_rl.py
 
-## Task 2 — W&B Integration
+## Task 4 — New State Space & Rewards (next up)
 
-- [ ] 2a. Add `wandb` to `requirements.txt`; add `--wandb` flag + `wandb.init()` to `train_rl.py`
-- [ ] 2b. Configure `EvalCallback` for unaugmented val trace (n_eval_episodes=20, deterministic)
-- [ ] 2c. Implement `SACDiagnosticsCallback` (ent_coef, Q-values, gradient norms)
-- [ ] 2d. Extend `AugmentationLogCallback` (trace_id histogram, link_failures_applied)
-- [ ] 2e. Log env-specific metrics from `info` dict (peak util, MPD load variance, event count)
-- [ ] 2f. Create W&B dashboard template (5 panel groups)
-- [ ] 2g. Set W&B alerts (policy collapse, divergence, NaN, FPS drop)
+**4a — Per-MPD VM tracking + host CXL load tracking (octopus/env.py)**
+- [ ] Add `mpd_vm_allocs: list[list[tuple[int, float]]]` — per-MPD list of (dealloc_tick, mem_gb)
+      Init in `reset()`. Update in `step()` on alloc. Purge in `_process_departures_through()`.
+- [ ] Add `cur_host_cxl_load = np.zeros(pod_size)` and `host_dealloc_events = np.zeros((pod_dur, pod_size))`
+      Reset in `reset()`. Update in `step()`. Drain in `_process_departures_through()`.
 
-## Task 3 — Pre-Training Sanity Checks
+**4b — Static topology precomputation (octopus/env.py)**
+- [ ] Add `mhd_to_hosts: dict[int, list[int]]` — inverse of host_to_mhds
+- [ ] Add `Q_j: np.ndarray` — neighbor scarcity: `Q_j = mean(1/deg(h) for h in mhd_to_hosts[j])`
+- [ ] Extract `_recompute_topology_derived()` — builds mhd_to_hosts + Q_j
+      Call from `__init__` and `_apply_augmentation` (so Q_j is correct after link failures)
 
-- [ ] 3a. Add `--no-train` flag; run random policy baseline (10k steps, record mean reward)
-- [ ] 3b. Single-env overfit test (50k steps, single trace, verify reward > random)
-- [ ] 3c. Reward scale check (confirm rewards in [-10, 10])
-- [ ] 3d. Augmented env smoke test (4 envs, 10k steps, compare reward distribution)
-- [ ] Add `--n-envs` flag + SubprocVecEnv support to `train_rl.py`
+**4c — New reward functions (octopus/env.py step())**
+- [ ] Add constructor params: `reward_variant="current"`, `lookahead_window=200`, `reward_lambda=0.2`
+- [ ] Implement D_j(t, W) computation — iterate mpd_vm_allocs[j] for VMs ending within W steps
+      Cache D_j array for reuse in `_get_obs()`
+- [ ] Dispatch on reward_variant:
+      - "current": unchanged `-(Δpeak)/fair_share - λ·Var(loads)`
+      - "A": `-max(ĉ_j+(t) for j ∈ N(i))` where `ĉ_j = (c_j - D_j) / D_pod`
+      - "B": `R_A - λ · max(ĉ_j(t) for j ∉ N(i))`
 
-## Task 4 — Baseline Training (No Augmentation)
+**4d — New 50-dim observation space (octopus/env.py _get_obs())**
+- [ ] When reward_variant != "current": build 6·d_max + 2 obs
+      Per-MPD slot k: [c_j/D_pod, D_j/D_pod, S_j/D_pod, mask, P_j/D_pod, Q_j]
+      Global: [global_peak/D_pod, vm_mem/D_pod]
+- [ ] Update `observation_space` shape in __init__ when reward_variant != "current"
 
-- [ ] Train `v3_baseline` (2M steps, 32 envs, train traces, λ=0.5, W&B)
-- [ ] Evaluate on val trace (50 iterations)
-- [ ] Stop gate: verify val reward > random baseline mean + 1 std within 500k steps
+**4e — CLI flags (scripts/train_rl.py)**
+- [x] Add `--reward-variant {current,A,B}` default "current"
+- [x] Add `--lookahead-window` type=int default=200
+- [x] Add `--reward-lambda` type=float default=0.2
+- [x] Pass all three to `_make_env()` → `OctopusMemPoolEnv()`
+- [x] Update PoolingSavingsCallback to pass obs_variant + mhd_to_hosts + Q_j to make_rl_alloc_cb
 
-## Task 5 — Augmentation Ablation Grid
+**4f — Eval script updates**
+- [x] `scripts/evaluate.py` `make_rl_alloc_cb()`: accept `obs_variant`, `mhd_to_hosts`, `Q_j`
+      Build 50-dim obs when variant != "current" using ctx-injected state
+- [x] `scripts/evaluate.py` `pooling_simulation()`: add `track_vm_allocs=False` param
+      When True: maintain `mpd_vm_allocs` + `host_cxl_load` in sim loop; inject into ctx dict
+- [x] `scripts/eval_rl.py`: accept `--reward-variant` flag, compute mhd_to_hosts + Q_j from M,
+      pass to make_rl_alloc_cb + pooling_simulation
 
-- [ ] 5a. Memory scaling only (`v3_aug_scale`)
-- [ ] 5b. Multi-trace only (`v3_aug_multitrace`)
-- [ ] 5c. Link failures only (`v3_aug_links`)
-- [ ] 5d. Per-VM memory noise only (`v3_aug_noise`)
-- [ ] 5e. Arrival jitter only (`v3_aug_jitter`)
-- [ ] 5f. All P0 + P1 combined (`v3_aug_full`)
-- [ ] 5g. Evaluate all runs on val trace; produce comparison table (pooling_ratio)
+**4g — Tests (tests/test_new_reward_obs.py)**
+- [x] D_j and S_j computation with known VM sets (unit test, no trace needed)
+- [x] Obs shape = 50 for new variants, 20 for "current"
+- [x] Reward A ∈ (-1, 0], Reward B ∈ (-(1+λ), 0]
+- [x] `reward_variant="current"` produces identical trajectories to old code (regression)
+- [x] Augmentation correctly recomputes Q_j and mhd_to_hosts after link failures
 
-## Task 6 — Hyperparameter Tuning
+## Task 5 — Pre-Ablation Timing (human-run after Task 4)
 
-- [ ] Create W&B Sweep config (Bayesian, 9 params)
-- [ ] Run 20–30 sweep trials (500k steps each, 3 GPUs)
-- [ ] Full 2M-step runs for top 3 configs
+- [ ] Run timing tests for reward variants current / A / B (10k steps, n_envs=32)
+- [ ] Compute max_timesteps budget for 6-hour overnight run
 
-## Task 7 — Model Comparison: MLP vs GNN
+## Task 6 — Overnight Experiments (human-run)
 
-- [ ] Decision gate: only if MLP + augmentation shows poor generalization
-- [ ] (Conditional) GNN policy implementation
+- [ ] GPU 0: exp_baseline_v4 (reward=current, 20-dim obs)
+- [ ] GPU 1: exp_rewardA_v4 (reward=A, 50-dim obs)
+- [ ] GPU 2: exp_rewardB_v4 (reward=B, 50-dim obs)
 
-## Task 8 — Observation Space Ablation
+## Task 7 — Post-Overnight Evaluation (human-run)
 
-- [ ] No time (remove sin/cos hour)
-- [ ] No global peak (remove peak feature)
-- [ ] No mask in obs (remove accessibility mask)
-- [ ] Minimal (only MPD loads + VM request)
-
-## Task 9 — Reward Function Variants
-
-- [ ] Parameterize reward selection in `env.py` via `--reward-variant` CLI arg
-- [ ] 9a. Lambda sweep: λ ∈ {0.0, 0.1, 0.25, 0.5, 1.0, 2.0}
-- [ ] 9b. Peak-only variant
-- [ ] 9b. Post-alloc peak variant
-- [ ] 9b. Scale-invariant balance (CV instead of Var)
-- [ ] 9b. Sparse reward (episode end only)
-
-## Task 10 — Final Evaluation on Test Set
-
-- [ ] Open `test_traces.sealed.json` (run ONCE after all decisions finalized)
-- [ ] Evaluate all model variants on 2 test traces
-- [ ] Save results to `output/final_eval/` (summary CSV, episode details, models.json)
-- [ ] Produce final comparison table sorted by pooling_ratio
+- [ ] Eval all 3 models on val trace (50 iterations)
+- [ ] Comparison table: pooling_ratio, savings, SAC stability metrics
+- [ ] Decision point: extend winner, tune W/λ, or ablate further
 
 ## Completed (plan-v1)
 
 - [x] AugmentationConfig dataclass
-- [x] 6 transform functions in `augmentation.py`
-- [x] `apply_augmentation()` pipeline
-- [x] Env integration (`_apply_augmentation`, `_switch_trace`)
-- [x] Augmentation CLI args in `train_rl.py`
-- [x] `AugmentationLogCallback` (basic)
+- [x] 6 transform functions in augmentation.py
+- [x] apply_augmentation() pipeline
+- [x] Env integration (_apply_augmentation, _switch_trace)
+- [x] Augmentation CLI args in train_rl.py
+- [x] AugmentationLogCallback
 - [x] Multi-trace pool loading
 - [x] 49 augmentation tests

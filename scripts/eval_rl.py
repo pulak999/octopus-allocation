@@ -51,14 +51,23 @@ DETAIL_FIELDNAMES = [
 ]
 
 
-def _eval_model_on_trace(model, max_deg, trace_data, M, n_iter):
+def _eval_model_on_trace(model, max_deg, trace_data, M, n_iter,
+                         obs_variant="current", mhd_to_hosts=None,
+                         Q_j=None, lookahead_window=200):
     """Run n_iter pod mappings; return (savings_list, ratio_list, detail_rows)."""
     all_vms, node_to_vms, node_to_machine, _, machine_sz = trace_data
     savings_list = []
     ratio_list = []
     detail_rows = []
+    track = obs_variant != "current"
 
-    rl_cb = make_rl_alloc_cb(model, max_deg)
+    rl_cb = make_rl_alloc_cb(
+        model, max_deg,
+        obs_variant=obs_variant,
+        mhd_to_hosts=mhd_to_hosts,
+        Q_j=Q_j,
+        lookahead_window=lookahead_window,
+    )
 
     for i in range(n_iter):
         seed = 10086 + i
@@ -67,6 +76,7 @@ def _eval_model_on_trace(model, max_deg, trace_data, M, n_iter):
         ratio = pooling_simulation(
             node_to_M, expanded_M, rl_cb,
             all_vms, node_to_vms, node_to_machine, machine_sz,
+            track_vm_allocs=track,
         )
         savings = 1.0 - ratio
         savings_list.append(savings)
@@ -99,19 +109,36 @@ def main():
         action="store_true",
         help="Skip the HOTFIX VM filter (match training config).",
     )
+    ap.add_argument(
+        "--reward-variant",
+        choices=["current", "A", "B"],
+        default=None,
+        help="Reward variant used during training (determines obs layout). "
+             "If omitted, read from config.json in the checkpoint directory.",
+    )
+    ap.add_argument(
+        "--lookahead-window",
+        type=int,
+        default=None,
+        help="Lookahead window W for D_j (default: read from config.json or 200).",
+    )
     args = ap.parse_args()
 
+    import json as _json
+    import numpy as _np
     from stable_baselines3 import SAC
 
     # Determine models to evaluate
-    models_to_eval = []  # list of (label, model_path)
+    models_to_eval = []  # list of (label, model_path, ckpt_dir)
     if args.run_id:
         for rid in args.run_id:
-            mp = os.path.join("output", "checkpoints", rid, "best_model")
-            models_to_eval.append((rid, mp))
+            ckpt_dir = os.path.join("output", "checkpoints", rid)
+            mp = os.path.join(ckpt_dir, "best_model")
+            models_to_eval.append((rid, mp, ckpt_dir))
     if args.model_path:
         label = os.path.splitext(os.path.basename(args.model_path))[0]
-        models_to_eval.append((label, args.model_path))
+        ckpt_dir = os.path.dirname(args.model_path)
+        models_to_eval.append((label, args.model_path, ckpt_dir))
 
     if not models_to_eval:
         ap.error("Provide --run-id or --model-path")
@@ -127,13 +154,47 @@ def main():
     max_deg = max(sum(row) for row in M)
     print(f"Topology: {num_hosts} hosts, {num_pools} MPDs, max_degree={max_deg}")
 
-    for label, model_path in models_to_eval:
+    for label, model_path, ckpt_dir in models_to_eval:
         print(f"\n=== Evaluating run: {label} ===")
 
         check_path = model_path if os.path.exists(model_path) else model_path + ".zip"
         if not os.path.exists(check_path):
             print(f"  Model not found: {check_path} — skipping.")
             continue
+
+        # Resolve reward variant and lookahead window (CLI > config.json > defaults)
+        obs_variant = args.reward_variant
+        lookahead_window = args.lookahead_window
+        config_path = os.path.join(ckpt_dir, "config.json")
+        if os.path.exists(config_path):
+            with open(config_path) as _f:
+                _cfg = _json.load(_f)
+            if obs_variant is None:
+                obs_variant = _cfg.get("reward_variant", "current")
+            if lookahead_window is None:
+                lookahead_window = _cfg.get("lookahead_window", 200)
+        obs_variant = obs_variant or "current"
+        lookahead_window = lookahead_window or 200
+        print(f"  obs_variant={obs_variant}  lookahead_window={lookahead_window}")
+
+        # Precompute topology-derived structures for new obs variants
+        mhd_to_hosts = None
+        Q_j = None
+        if obs_variant != "current":
+            num_mhd = len(M[0])
+            mhd_to_hosts = {j: [] for j in range(num_mhd)}
+            host_to_mhds_tmp = {}
+            for h, row in enumerate(M):
+                host_to_mhds_tmp[h] = [j for j, v in enumerate(row) if v]
+                for j in host_to_mhds_tmp[h]:
+                    mhd_to_hosts[j].append(h)
+            Q_j = _np.zeros(num_mhd, dtype=_np.float32)
+            for j in range(num_mhd):
+                hosts = mhd_to_hosts[j]
+                if hosts:
+                    inv_deg = [1.0 / len(host_to_mhds_tmp[h]) for h in hosts if host_to_mhds_tmp[h]]
+                    if inv_deg:
+                        Q_j[j] = float(_np.mean(inv_deg))
 
         model = SAC.load(model_path)
 
@@ -151,7 +212,11 @@ def main():
             try:
                 trace_data = load_trace(trace_name)
                 savings_list, ratio_list, detail_rows = _eval_model_on_trace(
-                    model, max_deg, trace_data, M, args.n_iter
+                    model, max_deg, trace_data, M, args.n_iter,
+                    obs_variant=obs_variant,
+                    mhd_to_hosts=mhd_to_hosts,
+                    Q_j=Q_j,
+                    lookahead_window=lookahead_window,
                 )
             except Exception as e:
                 print(f"  ERROR: {e}")

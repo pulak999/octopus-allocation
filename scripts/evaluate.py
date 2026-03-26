@@ -40,6 +40,7 @@ def pooling_simulation(
     node_to_vms,
     node_to_machine,
     machine_sz,
+    track_vm_allocs: bool = False,
 ):
     """Run one pooling simulation.  Structure matches the notebook's
     ``greedy_pooling_simulation`` line-for-line, except the allocation
@@ -162,6 +163,14 @@ def pooling_simulation(
     max_cxl_mem_vec = np.zeros(num_mhd, dtype=float)
     dealloc_events = np.zeros((pod_dur, num_mhd), dtype=float)
 
+    # Per-VM tracking state (only allocated when track_vm_allocs=True)
+    if track_vm_allocs:
+        mpd_vm_allocs: list = [[] for _ in range(num_mhd)]
+        host_cxl_load = np.zeros(pod_size, dtype=float)
+        host_dealloc_events = np.zeros((pod_dur, pod_size), dtype=float)
+    else:
+        mpd_vm_allocs = host_cxl_load = host_dealloc_events = None  # type: ignore[assignment]
+
     prev_tick = -1
     evt_idx = 0
     n_events = len(flat_events)
@@ -175,6 +184,18 @@ def pooling_simulation(
         else:
             cur_cxl_mem_vec -= dealloc_events[tick, :]
         cur_cxl_mem_vec = np.maximum(cur_cxl_mem_vec, 0.0)
+
+        # Drain per-host loads and purge expired MPD VM lists
+        if track_vm_allocs:
+            start_t = max(prev_tick + 1, 0)
+            for t in range(start_t, min(tick + 1, pod_dur)):
+                host_cxl_load -= host_dealloc_events[t, :]
+            np.maximum(host_cxl_load, 0.0, out=host_cxl_load)
+            for j in range(num_mhd):
+                if mpd_vm_allocs[j]:
+                    mpd_vm_allocs[j] = [
+                        (dt, m) for dt, m in mpd_vm_allocs[j] if dt > tick
+                    ]
 
         # Process all events at this tick
         while evt_idx < n_events and flat_events[evt_idx][0] == tick:
@@ -194,6 +215,9 @@ def pooling_simulation(
                 "num_mhd": _num_mhd,
                 "pod_rss_mem": _pod_rss_mem,
             }
+            if track_vm_allocs:
+                ctx["mpd_vm_allocs"] = mpd_vm_allocs
+                ctx["host_cxl_load"] = host_cxl_load
 
             alloc_vec = np.asarray(
                 alloc_fn(mem, mhd_list, cur_cxl_mem_vec, ctx), dtype=float
@@ -205,6 +229,15 @@ def pooling_simulation(
             assert dealloc_time > tick
             if dealloc_time < pod_dur:
                 dealloc_events[dealloc_time, :] += alloc_vec
+
+            # Update per-VM tracking after allocation
+            if track_vm_allocs:
+                for j in range(num_mhd):
+                    if alloc_vec[j] > 0 and dealloc_time < pod_dur:
+                        mpd_vm_allocs[j].append((dealloc_time, float(alloc_vec[j])))
+                host_cxl_load[node_in_pod_id] += mem
+                if dealloc_time < pod_dur:
+                    host_dealloc_events[dealloc_time, node_in_pod_id] += mem
 
         max_cxl_mem_vec = np.maximum(max_cxl_mem_vec, cur_cxl_mem_vec)
         prev_tick = tick
@@ -234,37 +267,79 @@ def make_pid_alloc_cb(kp=1.0, ki=0.01, kd=0.1):
     return _pid_alloc_cb
 
 
-def make_rl_alloc_cb(model, max_degree):
-    """Return a callback that uses the trained RL policy."""
+def make_rl_alloc_cb(model, max_degree, obs_variant="current",
+                     mhd_to_hosts=None, Q_j=None, lookahead_window=200):
+    """Return a callback that uses the trained RL policy.
+
+    Parameters
+    ----------
+    obs_variant : str
+        "current" (20-dim legacy) or "A"/"B" (50-dim new state space).
+    mhd_to_hosts : dict[int, list[int]] | None
+        Required when obs_variant != "current". Maps MPD index → host indices.
+    Q_j : np.ndarray | None
+        Required when obs_variant != "current". Neighbour-scarcity per MPD.
+    lookahead_window : int
+        W (timesteps) for D_j / S_j computation when obs_variant != "current".
+    """
 
     def _rl_alloc_cb(cxl_mem, mhd_list, cur_cxl_mem_vec, ctx):
         n_acc = len(mhd_list)
         num_mhd = ctx["num_mhd"]
         norm = ctx["pod_rss_mem"] if ctx["pod_rss_mem"] > 0 else 1.0
-
-        # Build observation (same layout as OctopusMemPoolEnv._get_obs)
-        loads = np.zeros(max_degree, dtype=np.float32)
-        for idx, mhd in enumerate(mhd_list):
-            loads[idx] = float(cur_cxl_mem_vec[mhd]) / norm
-
-        mask = np.zeros(max_degree, dtype=np.float32)
-        mask[:n_acc] = 1.0
-
-        vm_norm = np.float32(cxl_mem / norm)
-        peak_norm = np.float32(float(np.max(cur_cxl_mem_vec)) / norm)
-
-        # Time features
         tick = ctx["tick"]
-        abs_time = ctx["base_time"] + _dt.timedelta(
-            minutes=(tick + ctx["pod_start_ts"]) * 5
-        )
-        hour = abs_time.hour + abs_time.minute / 60.0
-        hour_sin = np.float32(np.sin(2.0 * np.pi * hour / 24.0))
-        hour_cos = np.float32(np.cos(2.0 * np.pi * hour / 24.0))
 
-        obs = np.concatenate(
-            [loads, mask, np.array([vm_norm, peak_norm, hour_sin, hour_cos])]
-        ).astype(np.float32)
+        if obs_variant == "current":
+            # --- Original 20-dim obs ------------------------------------
+            loads = np.zeros(max_degree, dtype=np.float32)
+            for idx, mhd in enumerate(mhd_list):
+                loads[idx] = float(cur_cxl_mem_vec[mhd]) / norm
+
+            mask = np.zeros(max_degree, dtype=np.float32)
+            mask[:n_acc] = 1.0
+
+            vm_norm = np.float32(cxl_mem / norm)
+            peak_norm = np.float32(float(np.max(cur_cxl_mem_vec)) / norm)
+
+            abs_time = ctx["base_time"] + _dt.timedelta(
+                minutes=(tick + ctx["pod_start_ts"]) * 5
+            )
+            hour = abs_time.hour + abs_time.minute / 60.0
+            hour_sin = np.float32(np.sin(2.0 * np.pi * hour / 24.0))
+            hour_cos = np.float32(np.cos(2.0 * np.pi * hour / 24.0))
+
+            obs = np.concatenate(
+                [loads, mask, np.array([vm_norm, peak_norm, hour_sin, hour_cos])]
+            ).astype(np.float32)
+
+        else:
+            # --- New 50-dim obs (variants A and B) ----------------------
+            mpd_vm_allocs = ctx["mpd_vm_allocs"]
+            host_cxl_load = ctx["host_cxl_load"]
+            W = lookahead_window
+            t_plus_W = tick + W
+
+            D_j = np.zeros(num_mhd, dtype=np.float64)
+            S_j = np.zeros(num_mhd, dtype=np.float64)
+            for j in range(num_mhd):
+                for dt, mem in mpd_vm_allocs[j]:
+                    if dt <= t_plus_W:
+                        D_j[j] += mem * (1.0 - (dt - tick) / W)
+                    else:
+                        S_j[j] += mem
+
+            obs = np.zeros(max_degree * 6 + 2, dtype=np.float32)
+            for k, mhd in enumerate(mhd_list):
+                base_idx = k * 6
+                obs[base_idx]     = float(cur_cxl_mem_vec[mhd]) / norm
+                obs[base_idx + 1] = float(D_j[mhd]) / norm
+                obs[base_idx + 2] = float(S_j[mhd]) / norm
+                obs[base_idx + 3] = 1.0
+                P_j = float(sum(host_cxl_load[h] for h in mhd_to_hosts[mhd]))
+                obs[base_idx + 4] = P_j / norm
+                obs[base_idx + 5] = float(Q_j[mhd])
+            obs[-2] = float(np.max(cur_cxl_mem_vec)) / norm
+            obs[-1] = float(cxl_mem) / norm
 
         # Predict
         action, _ = model.predict(obs, deterministic=True)

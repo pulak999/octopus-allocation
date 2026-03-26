@@ -35,13 +35,19 @@ class PoolingSavingsCallback(BaseCallback):
     """After every *eval_freq* timesteps, run pooling_simulation on the eval
     trace and log eval/pooling_savings_mean and eval/pooling_savings_std."""
 
-    def __init__(self, eval_trace_data, M, max_degree, eval_freq, n_iter=10, verbose=0):
+    def __init__(self, eval_trace_data, M, max_degree, eval_freq, n_iter=10,
+                 obs_variant="current", mhd_to_hosts=None, Q_j=None,
+                 lookahead_window=200, verbose=0):
         super().__init__(verbose)
         self._eval_trace_data = eval_trace_data
         self._M = M
         self._max_degree = max_degree
         self._eval_freq = eval_freq
         self._n_iter = n_iter
+        self._obs_variant = obs_variant
+        self._mhd_to_hosts = mhd_to_hosts
+        self._Q_j = Q_j
+        self._lookahead_window = lookahead_window
         self._last_eval_step = 0
 
     def _on_step(self) -> bool:
@@ -56,14 +62,22 @@ class PoolingSavingsCallback(BaseCallback):
 
         all_vms, node_to_vms, node_to_machine, _, machine_sz = self._eval_trace_data
         savings_list = []
+        track = self._obs_variant != "current"
 
         for i in range(self._n_iter):
             pod_to_nodes = generate_pod_to_nodes(node_to_vms, len(self._M), 99999 + i)
             node_to_M, expanded_M = expand_M_to_all_nodes(self._M, pod_to_nodes)
-            rl_cb = make_rl_alloc_cb(self.model, self._max_degree)
+            rl_cb = make_rl_alloc_cb(
+                self.model, self._max_degree,
+                obs_variant=self._obs_variant,
+                mhd_to_hosts=self._mhd_to_hosts,
+                Q_j=self._Q_j,
+                lookahead_window=self._lookahead_window,
+            )
             ratio = pooling_simulation(
                 node_to_M, expanded_M, rl_cb,
                 all_vms, node_to_vms, node_to_machine, machine_sz,
+                track_vm_allocs=track,
             )
             savings_list.append(1.0 - ratio)
 
@@ -184,7 +198,8 @@ class AugmentationLogCallback(BaseCallback):
 
 # ── helpers ──────────────────────────────────────────────────────────────
 def _make_env(trace_data, M, seed, variance_lambda=0.5, skip_hotfix=False,
-              aug_config=None, trace_pool=None):
+              aug_config=None, trace_pool=None, reward_variant="current",
+              lookahead_window=200, reward_lambda=0.2):
     all_vms, node_to_vms, node_to_machine, _vm_type_sz, machine_sz = trace_data
 
     def _init():
@@ -199,6 +214,9 @@ def _make_env(trace_data, M, seed, variance_lambda=0.5, skip_hotfix=False,
             skip_hotfix=skip_hotfix,
             aug_config=aug_config,
             trace_pool=trace_pool,
+            reward_variant=reward_variant,
+            lookahead_window=lookahead_window,
+            reward_lambda=reward_lambda,
         )
 
     return _init
@@ -283,6 +301,25 @@ def main():
         "--wandb-project",
         default="cxl-memory-pooling",
         help="W&B project name (default: cxl-memory-pooling)",
+    )
+    ap.add_argument(
+        "--reward-variant",
+        choices=["current", "A", "B"],
+        default="current",
+        help="Reward function variant: 'current' (Δpeak+λVar), 'A' (local proj. peak), "
+             "'B' (A + global stress term) (default: current)",
+    )
+    ap.add_argument(
+        "--lookahead-window",
+        type=int,
+        default=200,
+        help="Lookahead window W (ticks) for D_j departure relief (default: 200)",
+    )
+    ap.add_argument(
+        "--reward-lambda",
+        type=float,
+        default=0.2,
+        help="λ weight for reward B's global stress term (default: 0.2)",
     )
 
     # ── Augmentation args ─────────────────────────────────────────────
@@ -415,6 +452,27 @@ def main():
     else:
         all_trace_data.append(trace_data)
 
+    # ── Precompute topology-derived structures for new obs variants ────
+    mhd_to_hosts = None
+    Q_j = None
+    if args.reward_variant != "current":
+        import numpy as _np
+        num_mhd = len(M[0])
+        mhd_to_hosts = {j: [] for j in range(num_mhd)}
+        host_to_mhds_tmp = {}
+        for h, row in enumerate(M):
+            host_to_mhds_tmp[h] = [j for j, v in enumerate(row) if v]
+            for j in host_to_mhds_tmp[h]:
+                mhd_to_hosts[j].append(h)
+        Q_j = _np.zeros(num_mhd, dtype=_np.float32)
+        for j in range(num_mhd):
+            hosts = mhd_to_hosts[j]
+            if hosts:
+                inv_deg = [1.0 / len(host_to_mhds_tmp[h]) for h in hosts if host_to_mhds_tmp[h]]
+                if inv_deg:
+                    Q_j[j] = float(_np.mean(inv_deg))
+        print(f"Reward variant: {args.reward_variant} — mhd_to_hosts/Q_j precomputed")
+
     # ── Environments ──────────────────────────────────────────────────
     n_envs = args.n_envs
     env_fns = []
@@ -424,7 +482,10 @@ def main():
                                  variance_lambda=args.variance_lambda,
                                  skip_hotfix=args.skip_hotfix,
                                  aug_config=aug_config,
-                                 trace_pool=trace_pool))
+                                 trace_pool=trace_pool,
+                                 reward_variant=args.reward_variant,
+                                 lookahead_window=args.lookahead_window,
+                                 reward_lambda=args.reward_lambda))
     if n_envs > 1:
         train_env = SubprocVecEnv(env_fns)
         print(f"SubprocVecEnv: {n_envs} parallel environments")
@@ -436,7 +497,10 @@ def main():
     eval_env = DummyVecEnv(
         [_make_env(eval_trace_data, M, seed=args.seed + 10_000,
                    variance_lambda=args.variance_lambda,
-                   skip_hotfix=args.skip_hotfix)]
+                   skip_hotfix=args.skip_hotfix,
+                   reward_variant=args.reward_variant,
+                   lookahead_window=args.lookahead_window,
+                   reward_lambda=args.reward_lambda)]
     )
 
     # ── Callbacks ─────────────────────────────────────────────────────
@@ -463,6 +527,10 @@ def main():
         max_degree=max_deg,
         eval_freq=args.eval_freq,
         n_iter=5 if args.fast else 10,
+        obs_variant=args.reward_variant,
+        mhd_to_hosts=mhd_to_hosts,
+        Q_j=Q_j,
+        lookahead_window=args.lookahead_window,
         verbose=1,
     )
 

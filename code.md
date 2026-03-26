@@ -182,3 +182,84 @@ real VM arrival/departure events from Azure traces.
 2. **W&B install**: `wandb` must be added to `requirements.txt` and installed in venv.
 3. **`data/splits/` sealing**: Plan requires test traces sealed in JSON, not read until Task 10. This is an honor-system constraint for the executing agent.
 4. **Reward parameterization (Task 9)**: Currently hardcoded in `step()`. Needs refactoring to support multiple reward formulations via CLI flag.
+
+---
+
+## Code Review — commit 400e0a49 (2026-03-26)
+
+### Phase 1: Repo Overview
+
+Unchanged from previous review: RL agent for CXL memory allocation. Augmentation system (plan-v1) is complete and integrated. Plan-v2 adds new reward formulations (A, B) and a 50-dim observation space.
+
+**What's new since 24216f8a:**
+- W&B, `--skip-hotfix`, `--n-envs` / SubprocVecEnv, SACDiagnosticsCallback, EnvMetricsCallback all present in train_rl.py (plan-v2 Tasks 2–3 complete)
+- `--skip-hotfix` present in eval_rl.py
+
+**What plan-v2 Task 4 still needs to add:**
+- env.py: mpd_vm_allocs, mhd_to_hosts, Q_j, cur_host_cxl_load, host_dealloc_events, reward_variant, new obs
+- train_rl.py: --reward-variant, --lookahead-window, --reward-lambda CLI flags
+- evaluate.py: obs_variant in make_rl_alloc_cb, track_vm_allocs in pooling_simulation
+- eval_rl.py: pass reward variant config through
+
+### Phase 2: File-by-File Drill Down
+
+**octopus/env.py** (OctopusMemPoolEnv)
+- Obs: 2*max_degree + 4 = 20-dim (loads, mask, vm_norm, peak_norm, hour_sin, hour_cos)
+- Reward: -(delta_peak)/fair_share - λ·Var(loads) — "current" variant
+- No per-MPD VM tracking (needed for D_j, S_j)
+- No mhd_to_hosts inverse (needed for P_j, Q_j)
+- No cur_host_cxl_load (needed for P_j)
+- _apply_augmentation already recomputes host_to_mhds — augmentation hook for _recompute_topology_derived() is ready to use
+- _process_departures_through loops through dealloc_events — needs to also drain host loads
+
+**scripts/train_rl.py**
+- W&B init, SACDiagnosticsCallback, EnvMetricsCallback, AugmentationLogCallback — complete
+- --n-envs + SubprocVecEnv — complete
+- Missing: --reward-variant / --lookahead-window / --reward-lambda passed to _make_env() → OctopusMemPoolEnv()
+- eval_cb frequency formula uses args.eval_freq // n_envs — correct for timesteps
+- PoolingSavingsCallback calls make_rl_alloc_cb(model, max_degree) — needs obs_variant + mhd_to_hosts + Q_j added for new variants
+
+**scripts/evaluate.py**
+- make_rl_alloc_cb hardcodes 20-dim obs layout. The layout replicates _get_obs() exactly.
+  This is the #1 sync risk — new obs layout must be mirrored here.
+- pooling_simulation has no VM tracking state — no mpd_vm_allocs, no per-host loads.
+  For new reward variants these must be tracked in the sim loop and injected into ctx.
+- ctx dict currently: {tick, pod_start_ts, base_time, num_mhd, pod_rss_mem}
+  Needed additions: {mpd_vm_allocs, host_cxl_load, mhd_to_hosts, Q_j} when track_vm_allocs=True
+
+**scripts/eval_rl.py**
+- Calls make_rl_alloc_cb(model, max_deg) — needs same extension as train_rl.py
+- No reward variant config threaded through yet
+
+**tests/**
+- test_greedy_alloc.py + test_augmentation.py: 49 tests passing
+- No tests for new reward/obs variants (need for Task 4g)
+
+### Phase 3: Cross-Cutting Issues
+
+1. **Sync invariant: _get_obs() ↔ make_rl_alloc_cb()** — already flagged in LOG.md. Any change to obs layout in env.py must be mirrored in evaluate.py. The plan's 50-dim obs removes time features (hour_sin/cos) and adds 4 new per-MPD features. Test 4g should explicitly verify obs produced by both paths are equal on a known input.
+
+2. **mpd_vm_allocs purging** — the plan says purge in _process_departures_through(). This requires iterating each MPD's active VM list and removing entries where dealloc_tick <= tick. If MPD lists can be large (500+ VMs), list comprehension per tick could be O(N) per tick per MPD. Acceptable for training; for evaluate.py's sim loop (no Python overhead per event), use a deque or sorted list for efficiency.
+
+3. **observation_space shape mismatch at model load** — if a model trained with 20-dim obs is loaded via SAC.load() and then used with a 50-dim env, SB3 will error on the first predict() call. The reward variant must be recorded in config.json at training time and restored at eval time. eval_rl.py needs a way to detect which obs variant a checkpoint used.
+
+4. **Q_j vs. topology augmentation** — Q_j is precomputed from the base topology. If link failures are enabled, host degrees change, so Q_j changes each episode. The plan says _recompute_topology_derived() should be called from _apply_augmentation. This is correct but needs care: Q_j must be recomputed from aug_M, not self.M.
+
+5. **P_j requires current host loads, not MPD loads** — P_j(t) = sum of ℓ_h(t) for h in H(j). In the env, ℓ_h(t) = cur_host_cxl_load[h]. But in pooling_simulation, there's no host load tracking. Need to add host_cxl_load array to pooling_simulation's sweep loop.
+
+### Cross-Reference: Plan vs Codebase
+
+| Plan item | Status |
+|-----------|--------|
+| Task 1 trace characterization | ✅ already done |
+| Task 2 W&B integration | ✅ already done |
+| Task 3 sanity checks | ✅ already done |
+| --skip-hotfix in train/eval | ✅ already done |
+| Task 4a mpd_vm_allocs in env.py | ❌ not started |
+| Task 4b mhd_to_hosts, Q_j, _recompute_topology_derived | ❌ not started |
+| Task 4c reward A/B in step() | ❌ not started |
+| Task 4d new 50-dim obs in _get_obs() | ❌ not started |
+| Task 4e CLI flags in train_rl.py | ❌ not started |
+| Task 4f evaluate.py/eval_rl.py obs variant support | ❌ not started |
+| Task 4g tests | ❌ not started |
+| Tasks 5–7 timing/training/eval runs | human-run, code not needed |
