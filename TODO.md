@@ -1,3 +1,23 @@
+# Async Eval Worker — Tasks (async-plan)
+
+Source: `docs/plans/v3/async-plan.md`
+
+## In Progress
+
+- [ ] Add `_eval_worker_main` top-level function to `scripts/train_rl.py`
+- [ ] Add async fields to `PoolingSavingsCallback.__init__` (`_worker`, `_cmd_q`, `_res_q`, `_pending_step`, `_eval_device`)
+- [ ] Add `eval_device=None` parameter to `PoolingSavingsCallback.__init__`
+- [ ] Implement `PoolingSavingsCallback.on_training_start()`
+- [ ] Replace `PoolingSavingsCallback._on_step()` with async version
+- [ ] Implement `PoolingSavingsCallback.on_training_end()`
+- [ ] Delete `PoolingSavingsCallback._run_eval()`
+- [ ] Add `--eval-device` CLI arg to `main()` (default `cuda:1`)
+- [ ] Add `mp.set_start_method("spawn", force=True)` at top of `main()`
+- [ ] Wire `args.eval_device or None` → `PoolingSavingsCallback(eval_device=...)`
+- [ ] Write `tests/test_async_eval.py` (worker lifecycle + result roundtrip)
+
+---
+
 # Training, Ablations & Evaluation — Tasks (plan-v2)
 
 Source: `docs/plans/v3/plan-v2.md`

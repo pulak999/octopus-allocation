@@ -115,3 +115,39 @@ scripts/train_rl.py
     AugmentationLogCallback (if aug), WandbCallback (if --wandb)
   → W&B logging: SAC diagnostics, env metrics, aug params
 ```
+
+## Async Eval Architecture
+
+`PoolingSavingsCallback` spawns a persistent worker process at `on_training_start()`.
+Training never blocks on eval; the worker runs concurrently on a separate GPU.
+
+```
+Main process (cuda:0, training)         Worker process (cuda:1, eval)
+──────────────────────────────          ──────────────────────────────
+on_training_start()
+  spawn worker with policy_cpu,
+  eval_trace_data, topology, config ──→ imports octopus + scripts.evaluate
+                                        moves policy to cuda:1
+                                        enters cmd_q.get() wait loop
+
+every eval_freq steps (_on_step):
+  res_q.get_nowait() → log if ready ←── put (mean, std, snap_step) on res_q
+  deepcopy state_dict → CPU
+  cmd_q.put(('eval', sd, step))     ──→ load state_dict onto cuda:1 policy
+  return True (training resumes)        run n_iter × pooling_simulation
+                                        put result on res_q
+
+on_training_end():
+  cmd_q.put(('stop',))              ──→ exit
+  worker.join(timeout=300)
+  drain res_q, log final result
+```
+
+**Key functions:**
+- `_eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M, ...)` — top-level worker
+- `PoolingSavingsCallback.on_training_start()` — spawns worker
+- `PoolingSavingsCallback._on_step()` — non-blocking collect + async dispatch
+- `PoolingSavingsCallback.on_training_end()` — graceful shutdown + drain
+
+**Spawn is mandatory** (`mp.set_start_method("spawn", force=True)` in `main()`).
+Fork + CUDA = silent corruption.

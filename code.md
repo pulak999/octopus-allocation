@@ -263,3 +263,94 @@ Unchanged from previous review: RL agent for CXL memory allocation. Augmentation
 | Task 4f evaluate.py/eval_rl.py obs variant support | ❌ not started |
 | Task 4g tests | ❌ not started |
 | Tasks 5–7 timing/training/eval runs | human-run, code not needed |
+
+---
+
+## Code Review — commit f7cd8f803d3bfaa05c90eab4377466ba88729202 (2026-04-09)
+
+Scope: async eval plan implementation (`scripts/train_rl.py`, `scripts/evaluate.py`, `octopus/`)
+
+---
+
+### Phase 1: Repo Overview
+
+**Purpose:** RL agent (SB3 SAC) for CXL memory pooling. Learns to distribute VM memory across MPDs to minimise peak load. Trains on replayed Azure VM traces via Gymnasium env.
+
+**Directory map:**
+- `octopus/` — core env, data loading, topology, baselines, augmentation
+- `scripts/train_rl.py` — entry point: SAC training loop + callbacks
+- `scripts/evaluate.py` — `pooling_simulation()` + allocation callbacks (greedy, PID, RL)
+- `tests/` — pytest suite (67 passing, 23 failing pre-existing from Task 4 not yet implemented)
+- `data/` — trace pickles + topology CSVs (not in git)
+- No CI workflows (.github/ does not exist)
+
+**Key data flow:**
+`load_trace()` → `(all_vms, node_to_vms, node_to_machine, vm_type_sz, machine_sz)` →
+`OctopusMemPoolEnv` → SB3 SAC → `PoolingSavingsCallback._run_eval()` → `pooling_simulation()`
+
+**Architectural pattern:** callback-driven evaluation; `PoolingSavingsCallback._on_step()` fires every `eval_freq` steps and blocks training while running `n_iter` pooling simulations.
+
+---
+
+### Phase 2: File-by-file Drill Down
+
+#### `scripts/train_rl.py`
+
+- `PoolingSavingsCallback` (lines 51–131): current synchronous impl. `_on_step()` calls `_run_eval()` which blocks for ~133s per trigger.
+- `_run_eval()` (lines 77–131): imports `pooling_simulation` and `make_rl_alloc_cb` from `scripts.evaluate` inside the method. Runs `n_iter` simulations, logs mean/std.
+- `PoolingSavingsCallback.__init__` (lines 55–68): takes `eval_trace_data, M, max_degree, eval_freq, n_iter, obs_variant, mhd_to_hosts, Q_j, lookahead_window, verbose`. No async fields, no `eval_device`.
+- `main()`: has `--device` but not `--eval-device`. `PoolingSavingsCallback` is instantiated with `eval_freq=args.eval_freq` (raw, not the n_envs-scaled `eff_eval_freq`). This is intentional — the callback compares against `self.num_timesteps` which is already the global step count.
+- `BaseCallback` provides `self.num_timesteps` automatically from SB3.
+- `_REPO_ROOT` is set at module level (lines 19–21) — any spawned child that imports this module gets `sys.path` set correctly.
+
+**Bug note:** `except Exception: pass` in the planned `_on_step` catches ALL exceptions including `AttributeError` if `_res_q` is `None`. Should use `queue.Empty` specifically or guard with `if self._res_q is not None`.
+
+#### `scripts/evaluate.py`
+
+- `pooling_simulation()` (lines 65–304): pure function, takes topology + trace data + `alloc_fn` callback. Picklable, no GPU state.
+- `make_rl_alloc_cb(model, max_degree, ...)` (lines 326–428): extracts `policy = model.policy`, pre-allocates `_obs_buf` on GPU, returns a closure. Worker can replicate this logic with its own policy directly (no SB3 model dependency needed).
+- `_rl_alloc_cb` closure (lines 350–427): builds obs based on `obs_variant`, calls `policy._predict(_obs_buf, deterministic=True)`. Worker will inline this same closure.
+- The `make_rl_alloc_cb` logic is the template for the worker's inference closure.
+
+**Key finding:** The "current" obs variant uses `import datetime as _dt` via `ctx["base_time"]`. Worker must also import `datetime`.
+
+#### `octopus/topology.py`
+
+- `generate_pod_to_nodes()` and `expand_M_to_all_nodes()` are used inside `_run_eval()` per iteration. Worker must import and use these too.
+
+---
+
+### Phase 3: Cross-Cutting Issues
+
+1. **`except Exception: pass` is too broad.** Using bare `Exception` to catch `queue.Empty` also silences `AttributeError`, `KeyError`, and worker crashes. Use `import queue; except queue.Empty: pass` specifically. The `_worker.exitcode` check should be done separately.
+
+2. **`eval_freq` in callback vs `eff_eval_freq` for SB3 callbacks.** `PoolingSavingsCallback` uses `args.eval_freq` directly (not scaled by n_envs). This is correct because `self.num_timesteps` reflects total environment steps including all parallel envs — consistent with what SB3 reports.
+
+3. **Worker process pickling.** `_eval_worker_main` must be defined at module top level (not inside a class or function) for `spawn` pickling to work. Confirmed: plan places it before `PoolingSavingsCallback`.
+
+4. **`spawn` start method and `SubprocVecEnv`.** SB3's `SubprocVecEnv` uses `multiprocessing.Process` without setting context explicitly — it inherits whatever is set globally. Setting to `spawn` globally is safe and correct on this codebase.
+
+5. **23 pre-existing test failures** from Task 4 (new reward/obs variants not yet implemented in `octopus/env.py`). These are NOT caused by this plan and must not regress further.
+
+---
+
+### Cross-Reference: Plan vs Codebase
+
+| Plan item | Status | Notes |
+|-----------|--------|-------|
+| `_eval_worker_main` top-level function | NOT EXISTS | Needs to be added before `PoolingSavingsCallback` |
+| `PoolingSavingsCallback` async fields | NOT EXISTS | `_worker`, `_cmd_q`, `_res_q`, `_pending_step`, `_eval_device` |
+| `on_training_start()` in callback | NOT EXISTS | BaseCallback has it but PSCallback doesn't override |
+| `on_training_end()` in callback | NOT EXISTS | Same |
+| New async `_on_step()` | NOT EXISTS | Current sync version exists |
+| `_run_eval()` | EXISTS | Will be DELETED |
+| `--eval-device` CLI arg | NOT EXISTS | |
+| `mp.set_start_method("spawn")` in main | NOT EXISTS | |
+| `eval_device` wired to callback | NOT EXISTS | |
+
+**Preconditions already satisfied:**
+- `_REPO_ROOT` / `sys.path` setup runs automatically on worker spawn (module-level code)
+- `eval_trace_raw` (raw 5-tuple from `load_trace()`) is passed to callback — picklable, suitable for worker
+- `make_rl_alloc_cb`'s inference closure logic is in `evaluate.py` — will be inlined in worker
+
+**Key implementation note:** Worker will inline the obs-building + inference logic from `make_rl_alloc_cb` rather than calling `make_rl_alloc_cb(model, ...)`. The worker has its own `policy` object; it doesn't need the SB3 `model` wrapper.

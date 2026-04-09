@@ -8,12 +8,24 @@ Usage
 -----
   python scripts/train_rl.py --run-id v0_fast --fast --total-timesteps 5000
   python scripts/train_rl.py --run-id v1_lam05 --variance-lambda 0.5 --total-timesteps 500000
+
+  From repo root you can also: pip install -e .
 """
 
+# Allow `python scripts/train_rl.py` without PYTHONPATH (see pyproject.toml).
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import argparse
+import datetime
 import json
 import os
 import random
+import time
 
 import numpy as np
 import torch
@@ -25,9 +37,152 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from octopus.data import load_trace, load_topology
+from octopus.data import load_trace, load_topology, to_arrays
 from octopus.env import OctopusMemPoolEnv
 from octopus.topology import generate_pod_to_nodes, expand_M_to_all_nodes
+
+
+def _log(msg: str) -> None:
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
+
+
+def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
+                      max_degree, n_iter, obs_variant, lookahead_window,
+                      device_str):
+    """Persistent eval worker — runs in a spawned subprocess.
+
+    Waits on cmd_q for ('eval', state_dict_cpu, snap_step) commands.
+    Runs n_iter × pooling_simulation and puts (mean, std, snap_step) on res_q.
+    Exits cleanly on ('stop',).
+    """
+    import datetime as _dt
+    import numpy as np
+    import torch
+    from octopus.topology import generate_pod_to_nodes, expand_M_to_all_nodes
+    from scripts.evaluate import pooling_simulation
+
+    device = torch.device(device_str)
+    policy = policy_cpu.to(device)
+    policy.set_training_mode(False)
+
+    _obs_dim = max_degree * 6 + 2 if obs_variant != "current" else max_degree * 2 + 4
+    _obs_buf = torch.zeros(1, _obs_dim, dtype=torch.float32, device=device)
+
+    all_vms, node_to_vms, node_to_machine, _, machine_sz = eval_trace_data
+    track = obs_variant != "current"
+
+    def _make_alloc_cb(mhd_to_hosts_exp, Q_j_exp):
+        """Build one RL inference closure for a single pod mapping iteration."""
+        def _rl_alloc_cb(cxl_mem, mhd_list, cur_cxl_mem_vec, ctx):
+            n_acc = len(mhd_list)
+            num_mhd = ctx["num_mhd"]
+            norm = ctx["pod_rss_mem"] if ctx["pod_rss_mem"] > 0 else 1.0
+            tick = ctx["tick"]
+
+            if obs_variant == "current":
+                loads = np.zeros(max_degree, dtype=np.float32)
+                for idx, mhd in enumerate(mhd_list):
+                    loads[idx] = float(cur_cxl_mem_vec[mhd]) / norm
+                mask = np.zeros(max_degree, dtype=np.float32)
+                mask[:n_acc] = 1.0
+                vm_norm = np.float32(cxl_mem / norm)
+                peak_norm = np.float32(float(np.max(cur_cxl_mem_vec)) / norm)
+                abs_time = ctx["base_time"] + _dt.timedelta(
+                    minutes=(tick + ctx["pod_start_ts"]) * 5
+                )
+                hour = abs_time.hour + abs_time.minute / 60.0
+                hour_sin = np.float32(np.sin(2.0 * np.pi * hour / 24.0))
+                hour_cos = np.float32(np.cos(2.0 * np.pi * hour / 24.0))
+                obs = np.concatenate(
+                    [loads, mask, np.array([vm_norm, peak_norm, hour_sin, hour_cos])]
+                ).astype(np.float32)
+            else:
+                mpd_vm_allocs = ctx["mpd_vm_allocs"]
+                host_cxl_load = ctx["host_cxl_load"]
+                W = lookahead_window
+                t_plus_W = tick + W
+                obs = np.zeros(max_degree * 6 + 2, dtype=np.float32)
+                for k, mhd in enumerate(mhd_list):
+                    dj = sj = 0.0
+                    for dt, mem in mpd_vm_allocs[mhd]:
+                        if dt <= t_plus_W:
+                            dj += mem * (1.0 - (dt - tick) / W)
+                        else:
+                            sj += mem
+                    base_idx = k * 6
+                    obs[base_idx]     = float(cur_cxl_mem_vec[mhd]) / norm
+                    obs[base_idx + 1] = dj / norm
+                    obs[base_idx + 2] = sj / norm
+                    obs[base_idx + 3] = 1.0
+                    _mhd_to_hosts = ctx.get("mhd_to_hosts", mhd_to_hosts_exp)
+                    _Q_j = ctx.get("Q_j", Q_j_exp)
+                    P_j = float(sum(host_cxl_load[h] for h in _mhd_to_hosts[mhd]))
+                    obs[base_idx + 4] = P_j / norm
+                    obs[base_idx + 5] = float(_Q_j[mhd])
+                obs[-2] = float(np.max(cur_cxl_mem_vec)) / norm
+                obs[-1] = float(cxl_mem) / norm
+
+            _obs_buf[0].copy_(torch.from_numpy(obs))
+            with torch.no_grad():
+                action = policy._predict(_obs_buf, deterministic=True).cpu().numpy()[0]
+
+            raw = action[:n_acc].astype(np.float64)
+            raw = raw - raw.max()
+            exp_raw = np.exp(raw)
+            proportions = exp_raw / (exp_raw.sum() + 1e-12)
+            alloc_arr = np.zeros(num_mhd, dtype=np.float64)
+            for idx, mhd in enumerate(mhd_list):
+                alloc_arr[mhd] = proportions[idx] * cxl_mem
+            return alloc_arr
+
+        return _rl_alloc_cb
+
+    while True:
+        cmd = cmd_q.get()
+        if cmd[0] == "stop":
+            break
+        if cmd[0] == "eval":
+            _, state_dict_cpu, snap_step = cmd
+            policy.load_state_dict(
+                {k: v.to(device) for k, v in state_dict_cpu.items()}
+            )
+            policy.set_training_mode(False)
+
+            savings_list = []
+            for i in range(n_iter):
+                pod_to_nodes = generate_pod_to_nodes(node_to_vms, len(M), 99999 + i)
+                node_to_M, expanded_M = expand_M_to_all_nodes(M, pod_to_nodes)
+
+                mhd_to_hosts_exp = None
+                Q_j_exp = None
+                if obs_variant != "current":
+                    num_mhd_exp = len(expanded_M[0])
+                    mhd_to_hosts_exp = {j: [] for j in range(num_mhd_exp)}
+                    h_to_mhds = {}
+                    for h, row in enumerate(expanded_M):
+                        h_to_mhds[h] = [j for j, v in enumerate(row) if v]
+                        for j in h_to_mhds[h]:
+                            mhd_to_hosts_exp[j].append(h)
+                    Q_j_exp = np.zeros(num_mhd_exp, dtype=np.float32)
+                    for j in range(num_mhd_exp):
+                        hosts = mhd_to_hosts_exp[j]
+                        if hosts:
+                            inv_deg = [1.0 / len(h_to_mhds[h]) for h in hosts
+                                       if h_to_mhds[h]]
+                            if inv_deg:
+                                Q_j_exp[j] = float(np.mean(inv_deg))
+
+                rl_cb = _make_alloc_cb(mhd_to_hosts_exp, Q_j_exp)
+                ratio = pooling_simulation(
+                    node_to_M, expanded_M, rl_cb,
+                    all_vms, node_to_vms, node_to_machine, machine_sz,
+                    track_vm_allocs=track,
+                )
+                savings_list.append(1.0 - ratio)
+
+            arr = np.array(savings_list)
+            res_q.put((float(np.mean(arr)), float(np.std(arr)), snap_step))
 
 
 # ── Pooling savings callback ──────────────────────────────────────────────
@@ -37,7 +192,7 @@ class PoolingSavingsCallback(BaseCallback):
 
     def __init__(self, eval_trace_data, M, max_degree, eval_freq, n_iter=10,
                  obs_variant="current", mhd_to_hosts=None, Q_j=None,
-                 lookahead_window=200, verbose=0):
+                 lookahead_window=200, eval_device=None, verbose=0):
         super().__init__(verbose)
         self._eval_trace_data = eval_trace_data
         self._M = M
@@ -49,46 +204,78 @@ class PoolingSavingsCallback(BaseCallback):
         self._Q_j = Q_j
         self._lookahead_window = lookahead_window
         self._last_eval_step = 0
+        # async worker state
+        self._worker = None
+        self._cmd_q = None
+        self._res_q = None
+        self._pending_step = -1
+        self._eval_device = eval_device  # e.g. "cuda:1"; None = mirror training device
+
+    def on_training_start(self, locals_, globals_) -> None:
+        import copy
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        self._cmd_q = ctx.Queue()
+        self._res_q = ctx.Queue()
+        policy_cpu = copy.deepcopy(self.model.policy).cpu()
+        device_str = self._eval_device or str(next(self.model.policy.parameters()).device)
+        self._worker = ctx.Process(
+            target=_eval_worker_main,
+            args=(self._cmd_q, self._res_q, policy_cpu,
+                  self._eval_trace_data, self._M, self._max_degree,
+                  self._n_iter, self._obs_variant, self._lookahead_window,
+                  device_str),
+            daemon=True,
+        )
+        self._worker.start()
+        _log(f"[PoolingSavings] async worker started on {device_str}")
 
     def _on_step(self) -> bool:
-        if self.num_timesteps - self._last_eval_step < self._eval_freq:
+        import queue
+        # 1. Detect worker crash early
+        if self._worker is not None and self._worker.exitcode is not None:
+            _log(f"[PoolingSavings] WARNING: worker exited with code "
+                 f"{self._worker.exitcode} — eval results may be missing")
             return True
-        self._last_eval_step = self.num_timesteps
-        self._run_eval()
+
+        # 2. Collect any completed result (non-blocking)
+        if self._res_q is not None:
+            try:
+                mean, std, snap_step = self._res_q.get_nowait()
+                self.logger.record("eval/pooling_savings_mean", mean)
+                self.logger.record("eval/pooling_savings_std", std)
+                if self.verbose:
+                    _log(f"  [PoolingSavings @ {snap_step}] "
+                         f"mean={mean:.4f}  std={std:.4f}  "
+                         f"(collected at {self.num_timesteps})")
+                self._pending_step = -1
+            except queue.Empty:
+                pass
+
+        # 3. Dispatch new eval if due
+        if self.num_timesteps - self._last_eval_step >= self._eval_freq:
+            self._last_eval_step = self.num_timesteps
+            sd_cpu = {k: v.cpu() for k, v in self.model.policy.state_dict().items()}
+            self._cmd_q.put(("eval", sd_cpu, self.num_timesteps))
+            self._pending_step = self.num_timesteps
+            if self.verbose:
+                _log(f"  [PoolingSavings @ {self.num_timesteps}] eval dispatched (async)")
         return True
 
-    def _run_eval(self):
-        from scripts.evaluate import pooling_simulation, make_rl_alloc_cb
-
-        all_vms, node_to_vms, node_to_machine, _, machine_sz = self._eval_trace_data
-        savings_list = []
-        track = self._obs_variant != "current"
-
-        for i in range(self._n_iter):
-            pod_to_nodes = generate_pod_to_nodes(node_to_vms, len(self._M), 99999 + i)
-            node_to_M, expanded_M = expand_M_to_all_nodes(self._M, pod_to_nodes)
-            rl_cb = make_rl_alloc_cb(
-                self.model, self._max_degree,
-                obs_variant=self._obs_variant,
-                mhd_to_hosts=self._mhd_to_hosts,
-                Q_j=self._Q_j,
-                lookahead_window=self._lookahead_window,
-            )
-            ratio = pooling_simulation(
-                node_to_M, expanded_M, rl_cb,
-                all_vms, node_to_vms, node_to_machine, machine_sz,
-                track_vm_allocs=track,
-            )
-            savings_list.append(1.0 - ratio)
-
-        savings_arr = np.array(savings_list)
-        self.logger.record("eval/pooling_savings_mean", float(np.mean(savings_arr)))
-        self.logger.record("eval/pooling_savings_std", float(np.std(savings_arr)))
-        if self.verbose:
-            print(
-                f"  [PoolingSavings @ {self.num_timesteps}] "
-                f"mean={np.mean(savings_arr):.4f}  std={np.std(savings_arr):.4f}"
-            )
+    def on_training_end(self) -> None:
+        import queue
+        if self._worker is None:
+            return
+        self._cmd_q.put(("stop",))
+        self._worker.join(timeout=300)
+        # Drain any result that finished just before shutdown
+        try:
+            mean, std, snap_step = self._res_q.get_nowait()
+            self.logger.record("eval/pooling_savings_mean", mean)
+            self.logger.record("eval/pooling_savings_std", std)
+            _log(f"  [PoolingSavings @ {snap_step}] final result collected on shutdown")
+        except queue.Empty:
+            pass
 
 
 # ── SAC diagnostics callback ─────────────────────────────────────────────
@@ -197,17 +384,12 @@ class AugmentationLogCallback(BaseCallback):
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
-def _make_env(trace_data, M, seed, variance_lambda=0.5, skip_hotfix=False,
+def _make_env(trace_arrays, M, seed, variance_lambda=0.5, skip_hotfix=False,
               aug_config=None, trace_pool=None, reward_variant="current",
               lookahead_window=200, reward_lambda=0.2):
-    all_vms, node_to_vms, node_to_machine, _vm_type_sz, machine_sz = trace_data
-
     def _init():
         return OctopusMemPoolEnv(
-            all_vms=all_vms,
-            node_to_vms=node_to_vms,
-            node_to_machine=node_to_machine,
-            machine_sz=machine_sz,
+            trace_arrays=trace_arrays,
             M=M,
             seed=seed,
             variance_lambda=variance_lambda,
@@ -224,6 +406,9 @@ def _make_env(trace_data, M, seed, variance_lambda=0.5, skip_hotfix=False,
 
 # ── main ─────────────────────────────────────────────────────────────────
 def main():
+    import multiprocessing as mp
+    mp.set_start_method("spawn", force=True)
+
     ap = argparse.ArgumentParser(
         description="Train RL for Octopus memory allocation (namespaced by --run-id)"
     )
@@ -245,11 +430,20 @@ def main():
         default="data/topologies/AG16x6_expander_quads_r5_sym_fixed.csv",
     )
     ap.add_argument("--total-timesteps", type=int, default=500_000)
+    ap.add_argument("--train-freq", type=int, default=None,
+                    help="SAC train_freq: gradient update every N vec_env steps. "
+                         "Default: 16 if --fast, else 1. Higher = faster but less sample-efficient.")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument(
         "--device",
         default="auto",
         help="Torch device: 'auto', 'cpu', 'cuda:0', etc.",
+    )
+    ap.add_argument(
+        "--eval-device",
+        default="cuda:1",
+        help="Torch device for the async eval worker (default: cuda:1). "
+             "Pass '' to mirror --device.",
     )
     ap.add_argument(
         "--checkpoint-freq",
@@ -293,9 +487,9 @@ def main():
         "Use for CXL pooling training where per-node DRAM caps don't apply.",
     )
     ap.add_argument(
-        "--wandb",
+        "--no-wandb",
         action="store_true",
-        help="Enable Weights & Biases logging",
+        help="Disable Weights & Biases logging",
     )
     ap.add_argument(
         "--wandb-project",
@@ -369,7 +563,7 @@ def main():
 
     # ── W&B init ───────────────────────────────────────────────────────
     wandb_run = None
-    if args.wandb:
+    if not args.no_wandb:
         import wandb
         from wandb.integration.sb3 import WandbCallback
         wandb_run = wandb.init(
@@ -378,24 +572,24 @@ def main():
             config=vars(args),
             sync_tensorboard=True,
         )
-        print(f"W&B run: {wandb_run.url}")
+        _log(f"W&B run: {wandb_run.url}")
 
     # ── Save config ───────────────────────────────────────────────────
-    import datetime
     config = vars(args).copy()
+    config["wandb"] = not args.no_wandb
     config["timestamp"] = datetime.datetime.utcnow().isoformat()
     config_path = os.path.join(save_dir, "config.json")
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
-    print(f"Config saved → {config_path}")
+    _log(f"Config saved → {config_path}")
 
     # ── Load data ─────────────────────────────────────────────────────
-    print(f"Loading training trace: {args.trace} …")
-    trace_data = load_trace(args.trace)
+    _log(f"Loading training trace: {args.trace} …")
+    trace_data = to_arrays(load_trace(args.trace))
 
     M, num_hosts, num_pools = load_topology(args.topology)
     max_deg = max(sum(row) for row in M)
-    print(f"Topology: {num_hosts} hosts, {num_pools} MPDs, max_degree={max_deg}")
+    _log(f"Topology: {num_hosts} hosts, {num_pools} MPDs, max_degree={max_deg}")
 
     # ── Build augmentation config ─────────────────────────────────────
     aug_config = None
@@ -412,10 +606,10 @@ def main():
             multi_trace=args.multi_trace,
             enabled=True,
         )
-        print(f"Augmentation: scale=[{args.aug_scale_lo}, {args.aug_scale_hi}] "
-              f"noise_sigma={args.aug_memory_noise} jitter={args.aug_jitter} "
-              f"lifetime={args.aug_lifetime_noise} link_fail={args.aug_link_failures} "
-              f"multi_trace={args.multi_trace}")
+        _log(f"Augmentation: scale=[{args.aug_scale_lo}, {args.aug_scale_hi}] "
+             f"noise_sigma={args.aug_memory_noise} jitter={args.aug_jitter} "
+             f"lifetime={args.aug_lifetime_noise} link_fail={args.aug_link_failures} "
+             f"multi_trace={args.multi_trace}")
 
         # Load multi-trace pool if requested
         if args.multi_trace:
@@ -432,13 +626,15 @@ def main():
                 "SYD21PrdApp07-troundgrt5m.sqlite",
                 "YTO21PrdApp05-troundgrt5m.sqlite",
             ]
+            normalized = [tn if tn.endswith(".sqlite") else tn + ".sqlite"
+                          for tn in trace_names]
+
+            _log(f"  Loading {len(normalized)} traces into pool …")
             trace_pool = []
-            for tn in trace_names:
-                if not tn.endswith(".sqlite"):
-                    tn = tn + ".sqlite"
-                print(f"  Loading trace for pool: {tn} …")
-                trace_pool.append(_lt(tn))
-            print(f"  Loaded {len(trace_pool)} traces into pool")
+            for stem in normalized:
+                _log(f"    loading {stem} …")
+                trace_pool.append(to_arrays(_lt(stem)))
+            _log(f"  Loaded {len(trace_pool)} traces into pool")
 
     # ── Load multiple traces if --traces given ──────────────────────
     all_trace_data = []
@@ -446,9 +642,9 @@ def main():
         for tn in args.traces:
             if not tn.endswith(".sqlite"):
                 tn = tn + ".sqlite"
-            print(f"Loading training trace: {tn} …")
-            all_trace_data.append(load_trace(tn))
-        print(f"  {len(all_trace_data)} training traces loaded")
+            _log(f"Loading training trace: {tn} …")
+            all_trace_data.append(to_arrays(load_trace(tn)))
+        _log(f"  {len(all_trace_data)} training traces loaded")
     else:
         all_trace_data.append(trace_data)
 
@@ -471,7 +667,7 @@ def main():
                 inv_deg = [1.0 / len(host_to_mhds_tmp[h]) for h in hosts if host_to_mhds_tmp[h]]
                 if inv_deg:
                     Q_j[j] = float(_np.mean(inv_deg))
-        print(f"Reward variant: {args.reward_variant} — mhd_to_hosts/Q_j precomputed")
+        _log(f"Reward variant: {args.reward_variant} — mhd_to_hosts/Q_j precomputed")
 
     # ── Environments ──────────────────────────────────────────────────
     n_envs = args.n_envs
@@ -488,12 +684,13 @@ def main():
                                  reward_lambda=args.reward_lambda))
     if n_envs > 1:
         train_env = SubprocVecEnv(env_fns)
-        print(f"SubprocVecEnv: {n_envs} parallel environments")
+        _log(f"SubprocVecEnv: {n_envs} parallel environments")
     else:
         train_env = DummyVecEnv(env_fns)
 
-    print(f"Loading eval trace: {args.eval_trace} …")
-    eval_trace_data = load_trace(args.eval_trace)
+    _log(f"Loading eval trace: {args.eval_trace} …")
+    eval_trace_raw  = load_trace(args.eval_trace)   # tuple — for PoolingSavingsCallback
+    eval_trace_data = to_arrays(eval_trace_raw)     # arrays — for DummyVecEnv
     eval_env = DummyVecEnv(
         [_make_env(eval_trace_data, M, seed=args.seed + 10_000,
                    variance_lambda=args.variance_lambda,
@@ -522,7 +719,7 @@ def main():
         deterministic=True,
     )
     pooling_cb = PoolingSavingsCallback(
-        eval_trace_data=eval_trace_data,
+        eval_trace_data=eval_trace_raw,
         M=M,
         max_degree=max_deg,
         eval_freq=args.eval_freq,
@@ -531,6 +728,7 @@ def main():
         mhd_to_hosts=mhd_to_hosts,
         Q_j=Q_j,
         lookahead_window=args.lookahead_window,
+        eval_device=args.eval_device or None,
         verbose=1,
     )
 
@@ -553,7 +751,7 @@ def main():
             gamma=0.999,
             tau=0.005,
             ent_coef="auto",
-            train_freq=16 if args.fast else 1,
+            train_freq=args.train_freq if args.train_freq is not None else (16 if args.fast else 1),
             gradient_steps=1,
         )
         model = SAC("MlpPolicy", train_env, **sac_kw, **common_kw)
@@ -586,7 +784,7 @@ def main():
 
     # ── No-train mode: random policy baseline ───────────────────────
     if args.no_train:
-        print(f"\n--no-train: running random policy for {args.total_timesteps:,} steps …")
+        _log(f"--no-train: running random policy for {args.total_timesteps:,} steps …")
         obs = train_env.reset()
         rewards = []
         ep_reward = 0.0
@@ -600,11 +798,11 @@ def main():
         if ep_reward != 0.0:
             rewards.append(ep_reward)
         rewards_arr = np.array(rewards) if rewards else np.array([0.0])
-        print(f"\nRandom policy baseline ({len(rewards)} episodes):")
-        print(f"  mean reward: {rewards_arr.mean():.4f}")
-        print(f"  std reward:  {rewards_arr.std():.4f}")
-        print(f"  min reward:  {rewards_arr.min():.4f}")
-        print(f"  max reward:  {rewards_arr.max():.4f}")
+        _log(f"Random policy baseline ({len(rewards)} episodes):")
+        _log(f"  mean reward: {rewards_arr.mean():.4f}")
+        _log(f"  std reward:  {rewards_arr.std():.4f}")
+        _log(f"  min reward:  {rewards_arr.min():.4f}")
+        _log(f"  max reward:  {rewards_arr.max():.4f}")
         # Save results
         import json as _json
         result = {
@@ -620,7 +818,7 @@ def main():
         result_path = os.path.join(save_dir, "random_baseline.json")
         with open(result_path, "w") as f:
             _json.dump(result, f, indent=2)
-        print(f"  Results saved → {result_path}")
+        _log(f"  Results saved → {result_path}")
         train_env.close()
         eval_env.close()
         if wandb_run is not None:
@@ -628,8 +826,8 @@ def main():
         return
 
     # ── Train ─────────────────────────────────────────────────────────
-    print(f"\nTraining {args.algo.upper()} [{args.run_id}] for "
-          f"{args.total_timesteps:,} timesteps …\n")
+    _log(f"Training {args.algo.upper()} [{args.run_id}] for "
+         f"{args.total_timesteps:,} timesteps …")
     model.learn(
         total_timesteps=args.total_timesteps,
         callback=callbacks,
@@ -639,7 +837,7 @@ def main():
     # ── Save final model ──────────────────────────────────────────────
     final_path = os.path.join(save_dir, f"octopus_{args.algo}_final")
     model.save(final_path)
-    print(f"\n✓  Final model saved → {final_path}")
+    _log(f"Final model saved → {final_path}")
 
     train_env.close()
     eval_env.close()

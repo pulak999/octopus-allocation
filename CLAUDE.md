@@ -49,13 +49,23 @@ python -m pytest tests/ -v
 - No CI — all testing is local with pytest
 - HOTFIX filter should be skippable (`--skip-hotfix`) for CXL pooling training (plan-v2 Task 1a)
 - W&B (`wandb`) used for experiment tracking (plan-v2 Task 2)
+- **Async eval (async-plan):** `PoolingSavingsCallback` runs eval in a persistent background
+  worker process (spawned at `on_training_start`). Training never blocks on eval.
+  Worker runs on `cuda:1` by default; training stays on `cuda:0`. One-step metric lag is acceptable.
+  `mp.set_start_method("spawn")` is set globally in `main()` — required for CUDA safety.
 
 ## Hardware
 
 3× NVIDIA TITAN RTX (24 GB each), CUDA 12.5, kernel 5.15. SB3 SAC is single-GPU —
-pin via `CUDA_VISIBLE_DEVICES`. See plan-v2 GPU scheduling for parallel run layout.
+pin via `CUDA_VISIBLE_DEVICES`.
+
+**GPU split (async eval):**
+- `cuda:0`: SAC training (rollout + update)
+- `cuda:1`: async eval worker (inference in `_eval_worker_main`)
+- `cuda:2`: free — parallel run or ablation
 
 ## Current Plan
 
-Active: `docs/plans/v3/plan-v2.md` (training, ablations, evaluation).
+Active: `docs/plans/v3/async-plan.md` (async eval worker).
+Previous: `docs/plans/v3/plan-v2.md` (training, ablations, evaluation).
 Prerequisite plan-v1 (augmentation system) is complete — see `docs/plans/v3/LOG.md`.
