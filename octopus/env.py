@@ -52,10 +52,7 @@ class OctopusMemPoolEnv(gym.Env):
     # ------------------------------------------------------------------
     def __init__(
         self,
-        all_vms,
-        node_to_vms,
-        node_to_machine,
-        machine_sz,
+        trace_arrays,
         M,
         seed: int | None = None,
         variance_lambda: float = 0.5,
@@ -69,11 +66,8 @@ class OctopusMemPoolEnv(gym.Env):
     ):
         super().__init__()
 
-        # Store trace data (read-only, shared across episodes)
-        self.all_vms = all_vms
-        self.node_to_vms = node_to_vms
-        self.node_to_machine = node_to_machine
-        self.machine_sz = machine_sz
+        # Numpy trace data — no Python VM objects; CoW-safe across fork()
+        self.trace_arrays = trace_arrays
 
         # Per-pod topology (base — never mutated by augmentation)
         self.M = [list(row) for row in M]          # keep as nested list
@@ -134,7 +128,14 @@ class OctopusMemPoolEnv(gym.Env):
     # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
+    # Set to True (e.g. via env._reset_timing = True) to print per-phase
+    # reset timing. Useful for diagnosing throughput regressions.
+    _reset_timing: bool = False
+
     def reset(self, *, seed: int | None = None, options=None):
+        import time as _time
+        _t0 = _time.perf_counter() if self._reset_timing else None
+
         super().reset(seed=seed)
 
         # Determine pod-assignment seed
@@ -151,16 +152,27 @@ class OctopusMemPoolEnv(gym.Env):
             self._switch_trace(self.trace_pool[trace_idx])
 
         # 1 & 2. Pod assignment + event timeline
+        _t1 = _time.perf_counter() if self._reset_timing else None
         if self._precomputed_events is not None and self._seed in self._precomputed_events:
             self._load_precomputed(self._seed)
         else:
             self._generate_pod(self._seed)
             self._build_events()
+        _t2 = _time.perf_counter() if self._reset_timing else None
 
         # 2b. Apply augmentation if configured
         self._current_aug_params = None
         if self.aug_config is not None and self.aug_config.enabled:
             self._apply_augmentation()
+        _t3 = _time.perf_counter() if self._reset_timing else None
+
+        if self._reset_timing:
+            print(
+                f"[reset timing] build_events={(_t2-_t1)*1e3:.1f}ms "
+                f"augmentation={(_t3-_t2)*1e3:.1f}ms "
+                f"total_so_far={(_t3-_t0)*1e3:.1f}ms "
+                f"n_events={len(self.events)}"
+            )
 
         # Reset host_to_mhds to base topology (augmentation may override below)
         if self._current_aug_params is None:
@@ -311,89 +323,99 @@ class OctopusMemPoolEnv(gym.Env):
 
     def _generate_pod(self, seed: int):
         """Randomly select *pod_size* nodes for this episode's pod."""
+        ta = self.trace_arrays
+        n_nodes = len(ta.node_ids)
+
+        # Shuffle indices — same _random.shuffle logic as before so that
+        # seed → pod mapping is identical to the old Python-dict version.
         _random.seed(seed)
-        node_list = [int(nid) for nid in self.node_to_vms.keys()]
-        _random.shuffle(node_list)
+        indices = list(range(n_nodes))
+        _random.shuffle(indices)
+        pod_indices = indices[: self.pod_size]
 
-        self.pod_nodes = node_list[: self.pod_size]
-        self.node_to_pod_id = {n: i for i, n in enumerate(self.pod_nodes)}
-
-        # Pod DRAM capacity
-        self.pod_dram = 0.0
-        for node in self.pod_nodes:
-            cap = np.asarray(
-                self.machine_sz[self.node_to_machine[node]], dtype=float
-            )
-            self.pod_dram += float(cap[self.mem_idx])
+        self._pod_indices = pod_indices                            # int list, indices into ta
+        self.pod_nodes = [int(ta.node_ids[i]) for i in pod_indices]
+        self.node_to_pod_id = {n: k for k, n in enumerate(self.pod_nodes)}
+        self.pod_dram = float(ta.node_dram[pod_indices].sum())
 
     # ------------------------------------------------------------------
     def _build_events(self):
         """Build a sorted list of VM arrival events for the current pod.
 
+        Uses TraceArrays (numpy buffers) — no Python VM object reads,
+        no copy-on-write pressure in forked subprocesses.
+
         Also applies the notebook's HOTFIX — filtering VMs that would
         overflow per-node physical memory.
         """
-        # --- Time range --------------------------------------------------
-        n_start = _dt.datetime.max
-        n_end = _dt.datetime.min
-        any_vm = False
+        from octopus.data import _EPOCH
 
-        for node in self.pod_nodes:
-            for vmkey in self.node_to_vms.get(node, []):
-                vm = self.all_vms[vmkey]
-                any_vm = True
-                if vm.start_time < n_start:
-                    n_start = vm.start_time
-                if vm.end_time > n_end:
-                    n_end = vm.end_time
+        ta = self.trace_arrays
+        pod_indices = self._pod_indices   # list of int, indices into ta
 
-        if not any_vm:
-            self.events: list[tuple] = []
+        # --- Gather VM index ranges for each pod node --------------------
+        # Each element: (pod_slot k, node_index ni, vm_ptrs slice)
+        node_vm_ranges = []
+        for k, ni in enumerate(pod_indices):
+            lo = int(ta.node_offsets[ni])
+            hi = int(ta.node_offsets[ni + 1])
+            if hi > lo:
+                node_vm_ranges.append((k, ni, lo, hi))
+
+        if not node_vm_ranges:
+            self.events = []
             self.pod_dur = 0
             self.base_time = _dt.datetime(2024, 1, 1)
             self.trace_start = self.base_time
             return
 
-        self.base_time = _dt.datetime(
-            n_start.year, n_start.month, n_start.day,
-            n_start.hour, n_start.minute,
-        )
-        self.trace_start = n_start
+        # --- Time range (pure numpy, no Python VM objects) ---------------
+        all_vm_idx = np.concatenate([
+            ta.vm_ptrs[lo:hi] for _, _, lo, hi in node_vm_ranges
+        ])
+        min_start_sec = int(ta.vm_start[all_vm_idx].min())
+        max_end_sec   = int(ta.vm_end[all_vm_idx].max())
 
-        def to_tick(t):
-            return int((t - self.base_time).total_seconds() // 300)
+        # Round down to minute to match old datetime truncation behaviour
+        base_sec = min_start_sec - (min_start_sec % 60)
 
-        pod_start_ts = to_tick(n_start)
-        pod_end_ts = to_tick(n_end)
+        TICK = 300  # 5 minutes in seconds
+
+        def to_tick(t_sec: int) -> int:
+            return int((t_sec - base_sec) // TICK)
+
+        pod_start_ts = to_tick(min_start_sec)   # always 0 (< 1 tick from base)
+        pod_end_ts   = to_tick(max_end_sec)
         self.pod_dur = pod_end_ts - pod_start_ts + 1
         self._pod_start_ts = pod_start_ts
+
+        # Reconstruct base_time datetime for _get_obs() hour-of-day feature
+        self.base_time = _EPOCH + _dt.timedelta(seconds=base_sec)
+        self.trace_start = self.base_time
 
         if self.pod_dur <= 0:
             self.events = []
             return
 
-        # --- HOTFIX: filter VMs that would exceed per-node DRAM ----------
-        vmkey_to_skip: set = set()
+        # --- HOTFIX: filter VMs exceeding per-node DRAM ------------------
+        skip_set: set[int] = set()   # VM indices to drop
 
         if not self.skip_hotfix:
-            for node in self.pod_nodes:
-                node_alloc = [[] for _ in range(self.pod_dur)]
+            for k, ni, lo, hi in node_vm_ranges:
+                vms = ta.vm_ptrs[lo:hi]            # VM indices for this node
+                node_cap = float(ta.node_dram[ni])
+                node_alloc: list[list] = [[] for _ in range(self.pod_dur)]
                 node_dealloc = np.zeros(self.pod_dur, dtype=np.float64)
-                node_cap = float(
-                    np.asarray(
-                        self.machine_sz[self.node_to_machine[node]], dtype=float
-                    )[self.mem_idx]
-                )
 
-                for vmkey in self.node_to_vms.get(node, []):
-                    vm = self.all_vms[vmkey]
-                    vm_s = to_tick(vm.start_time) - pod_start_ts
-                    vm_e = to_tick(vm.end_time) - pod_start_ts
+                for vm_i in vms:
+                    vm_i = int(vm_i)
+                    vm_s = to_tick(int(ta.vm_start[vm_i])) - pod_start_ts
+                    vm_e = to_tick(int(ta.vm_end[vm_i]))   - pod_start_ts
                     if vm_e < 0:
-                        vmkey_to_skip.add(vmkey)
+                        skip_set.add(vm_i)
                         continue
-                    mem = float(np.asarray(vm.rss, dtype=float)[self.mem_idx])
-                    node_alloc[vm_s].append((vmkey, vm_e + 1, mem))
+                    mem = float(ta.vm_mem[vm_i])
+                    node_alloc[max(vm_s, 0)].append((vm_i, vm_e + 1, mem))
                     if vm_e + 1 < self.pod_dur:
                         node_dealloc[vm_e + 1] += mem
 
@@ -402,32 +424,30 @@ class OctopusMemPoolEnv(gym.Env):
                     cur -= node_dealloc[ts]
                     if cur < 0:
                         cur = 0.0
-                    for vmkey, end_ts, mem in node_alloc[ts]:
+                    for vm_i, end_ts, mem in node_alloc[ts]:
                         cur += mem
                         if cur > node_cap:
                             cur -= mem
-                            vmkey_to_skip.add(vmkey)
+                            skip_set.add(vm_i)
                             if end_ts < self.pod_dur:
                                 node_dealloc[end_ts] -= mem
 
-        # --- Collect events -----------------------------------------------
+        # --- Collect events ----------------------------------------------
         events: list[tuple] = []
-        for node in self.pod_nodes:
-            pod_id = self.node_to_pod_id[node]
-            for vmkey in self.node_to_vms.get(node, []):
-                if vmkey in vmkey_to_skip:
+        for k, ni, lo, hi in node_vm_ranges:
+            for vm_i in ta.vm_ptrs[lo:hi]:
+                vm_i = int(vm_i)
+                if vm_i in skip_set:
                     continue
-                vm = self.all_vms[vmkey]
-                vm_s = to_tick(vm.start_time) - pod_start_ts
-                vm_e = to_tick(vm.end_time) - pod_start_ts
+                vm_s = to_tick(int(ta.vm_start[vm_i])) - pod_start_ts
+                vm_e = to_tick(int(ta.vm_end[vm_i]))   - pod_start_ts
                 if vm_e < 0:
-                    continue  # VM ends before pod window — always skip
-                mem = float(np.asarray(vm.rss, dtype=float)[self.mem_idx])
+                    continue
+                mem = float(ta.vm_mem[vm_i])
                 if mem <= 0:
                     continue
-                events.append((vm_s, pod_id, mem, vm_e + 1))
+                events.append((vm_s, k, mem, vm_e + 1))
 
-        # Deterministic ordering: tick → host → descending size
         events.sort(key=lambda e: (e[0], e[1], -e[2]))
         self.events = events
 
@@ -552,16 +572,13 @@ class OctopusMemPoolEnv(gym.Env):
         self._recompute_topology_derived()
 
     # ------------------------------------------------------------------
-    def _switch_trace(self, trace_data):
-        """Swap trace data for multi-trace augmentation.
+    def _switch_trace(self, trace_arrays):
+        """Swap trace for multi-trace augmentation.
 
-        trace_data: tuple (all_vms, node_to_vms, node_to_machine, vm_type_sz, machine_sz)
+        trace_arrays: TraceArrays — numpy representation of the new trace.
         Precomputed event cache is NOT used with multi-trace (events built fresh).
         """
-        self.all_vms = trace_data[0]
-        self.node_to_vms = trace_data[1]
-        self.node_to_machine = trace_data[2]
-        self.machine_sz = trace_data[4]
+        self.trace_arrays = trace_arrays
 
     # ------------------------------------------------------------------
     def _get_obs(self) -> np.ndarray:

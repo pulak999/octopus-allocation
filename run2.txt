@@ -1,0 +1,84 @@
+[04:02:12] Config saved → output/checkpoints/aug_v2_rewardA/config.json
+[04:02:12] Loading training trace: AMS20PrdApp19-tround.sqlite …
+[04:02:42] Topology: 96 hosts, 192 MPDs, max_degree=8
+[04:02:42] Augmentation: scale=[0.7, 1.2] noise_sigma=0.0 jitter=0 lifetime=0.0 link_fail=0.0 multi_trace=True
+[04:02:42]   Loading 10 traces into pool …
+[04:02:42]     loading AMS20PrdApp19-tround.sqlite …
+[04:03:10]     loading BLAPrdApp19-troundgrt5m.sqlite …
+[04:04:29]     loading BN9PrdApp18-troundgrt5m.sqlite …
+[04:05:28]     loading DSM08PrdApp05-troundgrt5m.sqlite …
+[04:06:23]     loading DUB24PrdApp09-troundgrt5m.sqlite …
+[04:07:22]     loading LON23PrdApp01-troundgrt5m.sqlite …
+[04:07:29]     loading LVL01PrdApp05-troundgrt5m.sqlite …
+[04:08:21]     loading SG2PrdApp35-troundgrt5m.sqlite …
+[04:09:30]     loading SYD21PrdApp07-troundgrt5m.sqlite …
+[04:10:06]     loading YTO21PrdApp05-troundgrt5m.sqlite …
+[04:10:42]   Loaded 10 traces into pool
+[04:10:42] Reward variant: A — mhd_to_hosts/Q_j precomputed
+[04:12:50] SubprocVecEnv: 32 parallel environments
+[04:12:50] Loading eval trace: LON23PrdApp01-troundgrt5m.sqlite …
+Using cuda device
+[04:13:05] Training SAC [aug_v2_rewardA] for 2,000,000 timesteps …
+Logging to output/logs/aug_v2_rewardA/SAC_1
+/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py:418: UserWarning: Training and eval env are not of the same type<stable_baselines3.common.vec_env.subproc_vec_env.SubprocVecEnv object at 0x7f5a18bcaec0> != <stable_baselines3.common.vec_env.dummy_vec_env.DummyVecEnv object at 0x7f57a85a1300>
+  warnings.warn("Training and eval env are not of the same type" f"{self.training_env} != {self.eval_env}")
+/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/evaluation.py:70: UserWarning: Evaluation environment is not wrapped with a ``Monitor`` wrapper. This may result in reporting modified episode lengths and rewards, if other wrappers happen to modify these. Consider wrapping environment first with ``Monitor`` wrapper.
+  warnings.warn(
+Eval num_timesteps=100000, episode_reward=-25.08 +/- 0.56
+Episode length: 7334.67 +/- 423.81
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.91e+05 |
+|    pooling_ratio    | 1.05     |
+|    pooling_savings  | -0.0529  |
+| eval/               |          |
+|    mean_ep_length   | 7.33e+03 |
+|    mean_reward      | -25.1    |
+| sac/                |          |
+|    actor_grad_norm  | 0.308    |
+|    critic_grad_norm | 13.6     |
+|    q1_mean          | 10.2     |
+|    q1_std           | 0.121    |
+|    q2_mean          | 10.2     |
+|    q_spread         | 0.0427   |
+| time/               |          |
+|    total_timesteps  | 100000   |
+| train/              |          |
+|    actor_loss       | -15.3    |
+|    critic_loss      | 0.112    |
+|    ent_coef         | 0.891    |
+|    ent_coef_loss    | -1.56    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 387      |
+----------------------------------
+New best mean reward!
+Traceback (most recent call last):
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 668, in <module>
+    main()
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 650, in main
+    model.learn(
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/sac/sac.py", line 313, in learn
+    return super().learn(
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/off_policy_algorithm.py", line 335, in learn
+    rollout = self.collect_rollouts(
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/off_policy_algorithm.py", line 576, in collect_rollouts
+    if not callback.on_step():
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py", line 114, in on_step
+    return self._on_step()
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py", line 223, in _on_step
+    continue_training = callback.on_step() and continue_training
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py", line 114, in on_step
+    return self._on_step()
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py", line 223, in _on_step
+    continue_training = callback.on_step() and continue_training
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py", line 114, in on_step
+    return self._on_step()
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 74, in _on_step
+    self._run_eval()
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 94, in _run_eval
+    ratio = pooling_simulation(
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/evaluate.py", line 229, in pooling_simulation
+    alloc_fn(mem, mhd_list, cur_cxl_mem_vec, ctx), dtype=float
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/evaluate.py", line 344, in _rl_alloc_cb
+    P_j = float(sum(host_cxl_load[h] for h in mhd_to_hosts[mhd]))
+KeyError: 192

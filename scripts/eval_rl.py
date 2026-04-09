@@ -9,6 +9,13 @@ Usage
   python scripts/eval_rl.py --model-path output/checkpoints/best_model.zip --n-iter 10
 """
 
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import argparse
 import csv
 import datetime

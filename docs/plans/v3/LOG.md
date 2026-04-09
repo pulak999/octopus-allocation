@@ -92,3 +92,36 @@
 - Added `memory_noise_sigma` knob (Knob 7 from design-decisions.md) not in original plan.
 - Task 9 (training runs) deferred to plan-v2 per user decision.
 - `_M_np` (numpy copy of M) added to env for augmentation; base `self.M` (nested list) preserved for compatibility.
+
+---
+
+## [2026-04-09] Async Eval Worker (async-plan)
+
+### Features Implemented
+- **Async eval worker**: `PoolingSavingsCallback` now runs pooling_simulation in a persistent background process, overlapping eval with training. Training never blocks on eval.
+- **GPU split**: eval worker defaults to `cuda:1`, training stays on `cuda:0`. Controlled by new `--eval-device` CLI arg.
+- **Graceful lifecycle**: `on_training_start` spawns worker; `_on_step` does non-blocking collect + dispatch; `on_training_end` sends stop, joins, drains final result.
+- **Crash detection**: `_on_step` checks `_worker.exitcode` and logs a warning if worker dies unexpectedly.
+
+### Files Changed
+| File | What changed |
+|------|-------------|
+| `scripts/train_rl.py` | Added `_eval_worker_main` top-level function; replaced `_run_eval()` with async `on_training_start`, `_on_step`, `on_training_end` in `PoolingSavingsCallback`; added `--eval-device` arg; added `mp.set_start_method("spawn")` in `main()` |
+| `tests/test_async_eval.py` | New file: 8 tests covering worker roundtrip, multi-eval sequence, callback lifecycle, result drain on shutdown |
+| `CLAUDE.md` | Added async eval architecture, GPU split table |
+| `ARCH.md` | Added async eval architecture section with sequence diagram |
+| `TODO.md` | Added async-plan task list (all complete) |
+
+### Functions Written
+| Function | File | Description |
+|----------|------|-------------|
+| `_eval_worker_main` | `scripts/train_rl.py` | Persistent worker: receives eval commands, runs pooling_simulation on eval GPU, puts results on res_q |
+| `PoolingSavingsCallback.on_training_start` | `scripts/train_rl.py` | Spawns persistent worker process via `mp.get_context("spawn")` |
+| `PoolingSavingsCallback._on_step` (rewritten) | `scripts/train_rl.py` | Non-blocking result collect + conditional eval dispatch |
+| `PoolingSavingsCallback.on_training_end` | `scripts/train_rl.py` | Sends stop command, joins worker, drains final result |
+
+### Notes
+- `except queue.Empty` used throughout (not bare `except Exception`) — catches only the expected empty-queue case.
+- `_FakePolicy` and `octopus.data.VM` must be module-level for spawn pickling; locally-defined classes silently fail to pickle.
+- 23 pre-existing test failures (Task 4 reward/obs variants not yet in env.py) unchanged.
+- Testing procedure per plan: run two episodes, compare per-trigger eval wall time (sync ~133s vs async <1s) and `nvidia-smi` GPU utilisation split.

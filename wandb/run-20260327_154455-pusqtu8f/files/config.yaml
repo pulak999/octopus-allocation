@@ -1,0 +1,148 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            yfj35945fk19qgwubnetdq48od0a3nhx:
+                args:
+                    - --run-id
+                    - aug_all_traces
+                    - --augmentation
+                    - --multi-trace
+                    - --aug-traces
+                    - AMS20PrdApp01-tround
+                    - AMS20PrdApp02-tround
+                    - AMS20PrdApp03-tround
+                    - AMS20PrdApp04-tround
+                    - AMS20PrdApp05-tround
+                    - AMS20PrdApp06-tround
+                    - AMS20PrdApp19-tround
+                    - --wandb
+                    - --n-envs
+                    - "32"
+                    - --total-timesteps
+                    - "500000"
+                codePath: scripts/train_rl.py
+                codePathLocal: scripts/train_rl.py
+                cpu_count: 24
+                cpu_count_logical: 48
+                cudaVersion: "12.5"
+                disk:
+                    /:
+                        total: "67049664512"
+                        used: "11924054016"
+                email: pm3371@columbia.edu
+                executable: /home/pm3371/gitrepos/octopus-allocation/venv/bin/python
+                git:
+                    commit: f7cd8f803d3bfaa05c90eab4377466ba88729202
+                    remote: git@github.com:yuhong-zhong/octopus-allocation.git
+                gpu: NVIDIA TITAN RTX
+                gpu_count: 3
+                gpu_nvidia:
+                    - architecture: Turing
+                      cudaCores: 4608
+                      memoryTotal: "25769803776"
+                      name: NVIDIA TITAN RTX
+                      uuid: GPU-ffdc09b0-876f-f3cf-da73-c3bf96e78700
+                    - architecture: Turing
+                      cudaCores: 4608
+                      memoryTotal: "25769803776"
+                      name: NVIDIA TITAN RTX
+                      uuid: GPU-e39bfd28-7f5f-4a84-c468-ad9ac8fd083a
+                    - architecture: Turing
+                      cudaCores: 4608
+                      memoryTotal: "25769803776"
+                      name: NVIDIA TITAN RTX
+                      uuid: GPU-41b576a7-c904-036b-1720-71aa194127de
+                host: hulk
+                memory:
+                    total: "201369366528"
+                os: Linux-5.15.0-173-generic-x86_64-with-glibc2.35
+                program: /home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py
+                python: CPython 3.10.12
+                root: /home/pm3371/gitrepos/octopus-allocation
+                startedAt: "2026-03-27T19:44:55.219180Z"
+                writerId: yfj35945fk19qgwubnetdq48od0a3nhx
+        m: []
+        python_version: 3.10.12
+        t:
+            "1":
+                - 1
+            "2":
+                - 1
+            "3":
+                - 13
+                - 16
+                - 35
+            "4": 3.10.12
+            "5": 0.25.1
+            "12": 0.25.1
+            "13": linux-x86_64
+algo:
+    value: sac
+aug_jitter:
+    value: 0
+aug_lifetime_noise:
+    value: 0
+aug_link_failures:
+    value: 0
+aug_memory_noise:
+    value: 0
+aug_scale_dist:
+    value: triangular
+aug_scale_hi:
+    value: 1.2
+aug_scale_lo:
+    value: 0.7
+aug_traces:
+    value:
+        - AMS20PrdApp01-tround
+        - AMS20PrdApp02-tround
+        - AMS20PrdApp03-tround
+        - AMS20PrdApp04-tround
+        - AMS20PrdApp05-tround
+        - AMS20PrdApp06-tround
+        - AMS20PrdApp19-tround
+augmentation:
+    value: true
+checkpoint_freq:
+    value: 10000
+device:
+    value: auto
+eval_freq:
+    value: 20000
+eval_trace:
+    value: LON23PrdApp01-troundgrt5m.sqlite
+fast:
+    value: false
+lookahead_window:
+    value: 200
+multi_trace:
+    value: true
+n_envs:
+    value: 32
+no_train:
+    value: false
+reward_lambda:
+    value: 0.2
+reward_variant:
+    value: current
+run_id:
+    value: aug_all_traces
+seed:
+    value: 42
+skip_hotfix:
+    value: false
+topology:
+    value: data/topologies/AG16x6_expander_quads_r5_sym_fixed.csv
+total_timesteps:
+    value: 500000
+trace:
+    value: AMS20PrdApp19-tround.sqlite
+traces:
+    value: null
+variance_lambda:
+    value: 0.5
+wandb:
+    value: true
+wandb_project:
+    value: cxl-memory-pooling

@@ -1,0 +1,18 @@
+[16:43:34] W&B run: https://wandb.ai/pm3371-columbia-university/cxl-memory-pooling/runs/mhje4izz
+[16:43:34] Config saved → output/checkpoints/aug_all_traces/config.json
+[16:43:34] Loading training trace: AMS20PrdApp19-tround.sqlite …
+[16:44:03] Topology: 96 hosts, 192 MPDs, max_degree=8
+[16:44:03] Augmentation: scale=[0.7, 1.2] noise_sigma=0.0 jitter=0 lifetime=0.0 link_fail=0.0 multi_trace=True
+[16:44:03]   Loading 10 traces into pool (parallel) …
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_0 ident=140529548555840  AMS20PrdApp19-tround.sqlite
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_1 ident=140525512402496  BLAPrdApp19-troundgrt5m.sqlite
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_2 ident=140525504009792  BN9PrdApp18-troundgrt5m.sqlite
+
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_5 ident=140525478831680  LON23PrdApp01-troundgrt5m.sqlite
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_7 ident=140525462046272  SG2PrdApp35-troundgrt5m.sqlite
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_8 ident=140525453653568  SYD21PrdApp07-troundgrt5m.sqlite
+[16:44:03]     [pool] start  thread=ThreadPoolExecutor-0_9 ident=140525445260864  YTO21PrdApp05-troundgrt5m.sqlite
+[16:47:40]     [pool] done   thread=ThreadPoolExecutor-0_5 ident=140525478831680  LON23PrdApp01-troundgrt5m.sqlite  (216.5s)
+[16:52:29]     [pool] done   thread=ThreadPoolExecutor-0_0 ident=140529548555840  AMS20PrdApp19-tround.sqlite  (506.2s)
+[16:54:58]     [pool] done   thread=ThreadPoolExecutor-0_8 ident=140525453653568  SYD21PrdApp07-troundgrt5m.sqlite  (654.4s)
+[16:55:05]     [pool] done   thread=ThreadPoolExecutor-0_9 ident=140525445260864  YTO21PrdApp05-troundgrt5m.sqlite  (662.2s)

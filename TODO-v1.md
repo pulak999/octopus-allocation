@@ -21,29 +21,102 @@ All commands run from `/home/pm3371/gitrepos/octopus-allocation/` with venv acti
 ## Phase 0 — Quick Wins (existing SB3 codebase)
 
 ### Diagnostics
-- [ ] **Weight vector distribution** — plot softmax output **a** over a held-out episode. Near-uniform = collapsed no-op; always routing to one MPD = degenerate greedy. Want diversity correlated with load.
-- [ ] **Pooling savings curve** — evaluate on LON23 every 100 episodes during training. Training reward (Δpeak) can look reasonable while pooling savings are flat.
-- [ ] **MPD load variance** Var(**c**_t) — plot over training steps. Should decrease as policy spreads load; growing = consolidating.
+- [x] **Weight vector distribution** — `scripts/diagnose.py` Plot 1: softmax weights per accessible MPD over a held-out episode.
+- [x] **Pooling savings curve** — `PoolingSavingsCallback` in `train.py`/`train_rl.py` logs `eval/pooling_savings_mean` every `eval_freq` steps to TensorBoard.
+- [x] **MPD load variance** Var(**c**_t) — `scripts/diagnose.py` Plot 3: load variance over episode for RL vs greedy.
 - [ ] **SAC entropy H(π)** — plot from TensorBoard (`output/logs/`). Healthy SAC maintains nonzero entropy; collapse to near-zero = loss of exploration before convergence.
 - [ ] **Q-value vs actual return** — compare predicted Q to Monte Carlo returns on held-out episodes. Systematic overestimation = reward hacking.
-- [ ] **Behavioral side-by-side** — run greedy, optimal, and RL on same trace segment; plot per-MPD load time series on one figure. Reveals whether RL tracks optimal, does something different, or ignores load.
+- [x] **Behavioral side-by-side** — `scripts/diagnose.py` Plot 2: per-MPD load time series, RL vs greedy on same episode.
 
 ### Reward
-- [ ] Add variance shaping term: `R -= λ * jnp.var(mpd_load)`. Increase λ aggressively — current behavior may optimize average load without penalizing imbalance.
-- [ ] Verify agent stops concentrating load — max/min MHD ratio should drop from ~20× toward greedy's ~2.3×.
+- [x] Add variance shaping term: `R -= λ * var(mpd_load)`. `variance_lambda` constructor arg in `OctopusMemPoolEnv`; `--variance-lambda` CLI arg in `train.py`/`train_rl.py`.
+- [ ] Verify agent stops concentrating load — max/min MHD ratio should drop from ~20× toward greedy's ~2.3×. (`scripts/diagnose.py` Plot 4 will show this once a model is trained with variance shaping.)
 - [ ] Verify reward is smooth and differentiable w.r.t. continuous action logits at every step. Non-smooth rewards (e.g. involving `argmax`) prevent SAC from learning a good policy gradient.
 
 ### Baselines
-- [ ] Implement `pid_alloc(cxl_mem, mhd_list, cur_cxl_mem_vec, pid_state)` in `octopus/baselines.py` — proportional to inverse load with integral term tracking cumulative imbalance.
-- [ ] Add `"pid"` to `--policy` choices in `scripts/evaluate.py` and add `make_pid_alloc_cb()` callback alongside `_greedy_alloc_cb`.
-- [ ] Run greedy and optimal baselines on all 10 traces × all 4 topologies (50 pod mappings each) to establish per-cluster savings budget.
+- [x] Implement `pid_alloc(cxl_mem, mhd_list, cur_cxl_mem_vec, pid_state)` in `octopus/baselines.py`.
+- [x] Add `"pid"` to `--policy` choices in `scripts/evaluate.py`; added `make_pid_alloc_cb()` with fresh state per pod mapping.
+- [ ] Run greedy and optimal baselines on all 10 traces × all 4 topologies (50 pod mappings each) — use `scripts/eval_baselines.py` (implemented); sweep not yet run.
 - [ ] Implement `make_optimal_alloc_cb(M)` in `scripts/evaluate.py` — builds tick-level demand accumulator and calls `find_optimal` at each step. Add `"optimal"` to `--policy` choices. Test on small trace first (optimal is O(flow) per tick).
-- [ ] Fill `tab:greedy_vs_opt` in `docs/v1/v1.tex` with greedy avg/min/max/std for AG16x6 topology, then fill the gap column: `optimal_savings - greedy_savings`. This is the headline motivation number.
+- [ ] Fill `tab:greedy_vs_opt` in `docs/v1/v1.tex` — depends on baseline sweep above.
 
 ### Model comparison (slow vs. fast)
-- [ ] Evaluate slow and fast checkpoints on AMS20 + LON23 (50 pod mappings each). See `docs/overview/PAPER_TODO.md §5` for parameter table.
-- [ ] Plot training curves — both `output/logs/evaluations.npz` (slow) and `output/logs_fast/evaluations.npz` (fast) on same axes.
-- [ ] Plot per-MPD load time series comparison (see `figs/mhd_timeseries_*.png` for format). Use `--save-timeseries` flag or notebook.
+- [ ] Evaluate slow and fast checkpoints on AMS20 + LON23 (50 pod mappings each) — use `scripts/eval_rl.py` (implemented); eval not yet run.
+- [x] Plot training curves — `scripts/plot_results.py` Figure 2 reads `evaluations.npz` for all run-ids, overlays on same axes.
+- [x] Plot per-MPD load time series comparison — `scripts/plot_results.py` Figure 3 + `scripts/diagnose.py` Plot 2.
+
+---
+
+## Phase 0.5 — Simulation Speed & Baseline Infrastructure
+
+Goal: make `eval_baselines.py` fast enough to sweep all 10 traces × 4 topologies × 50
+iterations in a single overnight run, and validate that greedy/PID numbers are stable
+before any RL comparisons.
+
+### Speed-up: `pooling_simulation` (`scripts/evaluate.py`)
+
+The simulation is called thousands of times per sweep. Key bottlenecks to fix:
+
+- [ ] **`mhd_list` recomputed per VM arrival** (inner loop): precompute
+  `node_mhd_lists = {node_id: [...] for node_id in node_to_M}` once per simulation
+  call and look up by index in the tick sweep.
+- [ ] **`to_tick` datetime arithmetic in hot loops**: convert all `start_time`/`end_time`
+  to integer ticks at the start of the simulation (one vectorised pass over `node_to_vms`),
+  cache `(vm_tick_start, vm_tick_end, mem)` tuples — `to_tick` becomes integer floor
+  division with no datetime objects in the hot loop.
+- [ ] **`np.asarray(vm.rss)` called per VM twice** (HOTFIX pass + event build pass):
+  cache `mem = float(vm.rss[MEM_IDX])` once per VM and reuse in both passes.
+- [ ] **ctx dict allocated per VM**: `ctx` contains compile-time constants for greedy/PID.
+  Replace with pre-built named args captured in a closure; remove per-call `dict()`.
+- [ ] **`alloc_events_sim` as list-of-lists** (one slot per tick): most ticks are empty
+  for sparse traces. Replace with a flat sorted list of `(tick, node_id, dealloc_tick,
+  mem)` and advance a pointer — skips O(pod_dur) empty-slot iterations.
+
+Target: ≥3× speedup per simulation call on AMS20 / AG16x6 measured before/after.
+
+### Speed-up: `greedy_alloc` (`octopus/baselines.py`)
+
+- [ ] Replace the Python `while` loop with a vectorised numpy version:
+  1. `loads = cur_cxl_mem_vec[mhd_list]`
+  2. `order = np.argsort(loads)` (O(degree log degree), degree ≤ 8)
+  3. Sweep sorted loads once, fill level-by-level with cumsum arithmetic — no Python loop.
+- [ ] Add a regression test (`tests/test_greedy_alloc.py`) that asserts
+  `np.allclose(greedy_alloc_fast(...), greedy_alloc_ref(...))` on 20 random inputs
+  before replacing the implementation.
+
+### Parallelism: `eval_baselines.py`
+
+- [ ] Add `--n-workers INT` (default: `os.cpu_count()`). Use `multiprocessing.Pool`
+  to run independent `(policy, topology, trace)` combos in parallel.
+- [ ] Each worker loads its own trace, runs its combo, returns a result dict.
+  Main process collects results and appends to CSV atomically (write temp file + rename).
+- [ ] `--n-workers 1` forces serial mode for debugging.
+
+### Timing & logging
+
+- [ ] Add `wall_sec` column to `output/baselines/results.csv`.
+- [ ] Print per-combo timing on completion:
+  ```
+  [timing] greedy / AMS20 / AG16x6 : 12.3s  (50 iters, 0.25s/iter)
+  [timing] TOTAL: 847s across 100 combos, 8 workers, wall=112s
+  ```
+- [ ] Print speedup factor (fast vs. ref greedy) once after first combo completes.
+
+### Verification
+
+```bash
+# 1. Regression test: fast greedy must match reference
+python -m pytest tests/test_greedy_alloc.py -v
+
+# 2. Smoke: one combo, should finish in <30s
+python scripts/eval_baselines.py --policies greedy --n-iter 5 \
+  --traces AMS20PrdApp19-tround \
+  --topologies data/topologies/AG16x6_expander_quads_r5_sym_fixed.csv
+
+# 3. Full sweep: all traces × AG16x6, greedy + pid, 50 iters
+python scripts/eval_baselines.py --policies greedy pid --n-iter 50 --n-workers 16
+# → output/baselines/results.csv should have 20 rows (2 × 10); re-run adds 0 rows
+```
 
 ---
 

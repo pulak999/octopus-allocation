@@ -1,0 +1,76 @@
+{
+  "os": "Linux-5.15.0-173-generic-x86_64-with-glibc2.35",
+  "python": "CPython 3.10.12",
+  "startedAt": "2026-03-27T20:31:38.796182Z",
+  "args": [
+    "--run-id",
+    "aug_all_traces",
+    "--augmentation",
+    "--multi-trace",
+    "--aug-traces",
+    "AMS20PrdApp19-tround",
+    "BLAPrdApp19-troundgrt5m",
+    "BN9PrdApp18-troundgrt5m",
+    "DSM08PrdApp05-troundgrt5m",
+    "DUB24PrdApp09-troundgrt5m",
+    "LON23PrdApp01-troundgrt5m",
+    "LVL01PrdApp05-troundgrt5m",
+    "SG2PrdApp35-troundgrt5m",
+    "SYD21PrdApp07-troundgrt5m",
+    "YTO21PrdApp05-troundgrt5m",
+    "--wandb",
+    "--n-envs",
+    "32",
+    "--total-timesteps",
+    "500000"
+  ],
+  "program": "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py",
+  "codePath": "scripts/train_rl.py",
+  "codePathLocal": "scripts/train_rl.py",
+  "git": {
+    "remote": "git@github.com:yuhong-zhong/octopus-allocation.git",
+    "commit": "f7cd8f803d3bfaa05c90eab4377466ba88729202"
+  },
+  "email": "pm3371@columbia.edu",
+  "root": "/home/pm3371/gitrepos/octopus-allocation",
+  "host": "hulk",
+  "executable": "/home/pm3371/gitrepos/octopus-allocation/venv/bin/python",
+  "cpu_count": 24,
+  "cpu_count_logical": 48,
+  "gpu": "NVIDIA TITAN RTX",
+  "gpu_count": 3,
+  "disk": {
+    "/": {
+      "total": "67049664512",
+      "used": "11924054016"
+    }
+  },
+  "memory": {
+    "total": "201369366528"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA TITAN RTX",
+      "memoryTotal": "25769803776",
+      "cudaCores": 4608,
+      "architecture": "Turing",
+      "uuid": "GPU-ffdc09b0-876f-f3cf-da73-c3bf96e78700"
+    },
+    {
+      "name": "NVIDIA TITAN RTX",
+      "memoryTotal": "25769803776",
+      "cudaCores": 4608,
+      "architecture": "Turing",
+      "uuid": "GPU-e39bfd28-7f5f-4a84-c468-ad9ac8fd083a"
+    },
+    {
+      "name": "NVIDIA TITAN RTX",
+      "memoryTotal": "25769803776",
+      "cudaCores": 4608,
+      "architecture": "Turing",
+      "uuid": "GPU-41b576a7-c904-036b-1720-71aa194127de"
+    }
+  ],
+  "cudaVersion": "12.5",
+  "writerId": "5il3q6y103iybiexn0bwn9bc70hzg2lk"
+}

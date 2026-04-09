@@ -12,7 +12,105 @@ import datetime
 import pickle
 import csv
 import random as _random
+from dataclasses import dataclass
+
 import numpy as np
+
+# Reference epoch for converting datetimes → int64 seconds.
+# Traces are from 2024; this gives small positive values comfortably within int32.
+_EPOCH = datetime.datetime(2020, 1, 1)
+
+
+@dataclass
+class TraceArrays:
+    """Numpy representation of a loaded trace — no Python VM objects.
+
+    Reading these arrays does not touch Python refcounts, so they are safe
+    to share across ``fork()``-based subprocesses without triggering
+    copy-on-write page copies.
+
+    Layout
+    ------
+    Per-VM arrays (length n_vms):
+        vm_start  int64  seconds since _EPOCH
+        vm_end    int64  seconds since _EPOCH
+        vm_mem    float32  GB (rss[mem_idx])
+
+    Per-node arrays (length n_nodes):
+        node_ids   int32  actual node_id values, in node_to_vms.keys() order
+        node_dram  float32  machine_sz[machine][mem_idx]
+
+    CSR structure mapping node → VMs:
+        node_offsets  int32  shape (n_nodes+1,)
+        vm_ptrs       int32  shape (total_vm_entries,)
+        node i owns VMs vm_ptrs[node_offsets[i] : node_offsets[i+1]]
+        values are indices into vm_* arrays
+    """
+    vm_start: np.ndarray
+    vm_end: np.ndarray
+    vm_mem: np.ndarray
+    node_ids: np.ndarray
+    node_dram: np.ndarray
+    node_offsets: np.ndarray
+    vm_ptrs: np.ndarray
+
+
+def to_arrays(trace_data, mem_idx: int = 1) -> "TraceArrays":
+    """Convert ``load_trace()`` output to :class:`TraceArrays`.
+
+    Call this once after loading, before forking subprocesses.  The returned
+    object holds all VM data in C-heap numpy buffers — reading them in child
+    processes does not trigger copy-on-write.
+    """
+    all_vms, node_to_vms, node_to_machine, _vm_type_sz, machine_sz = trace_data
+
+    # ── per-VM arrays ────────────────────────────────────────────────────
+    all_vmkeys = list(all_vms.keys())
+    n_vms = len(all_vmkeys)
+    vmkey_to_idx = {k: i for i, k in enumerate(all_vmkeys)}
+
+    vm_start = np.empty(n_vms, dtype=np.int64)
+    vm_end   = np.empty(n_vms, dtype=np.int64)
+    vm_mem   = np.empty(n_vms, dtype=np.float32)
+
+    for i, vmkey in enumerate(all_vmkeys):
+        vm = all_vms[vmkey]
+        vm_start[i] = int((vm.start_time - _EPOCH).total_seconds())
+        vm_end[i]   = int((vm.end_time   - _EPOCH).total_seconds())
+        vm_mem[i]   = float(np.asarray(vm.rss, dtype=float)[mem_idx])
+
+    # ── per-node arrays + CSR ────────────────────────────────────────────
+    # Preserve dict-key ordering so that _random.shuffle(range(n_nodes))
+    # gives the same pod assignments as the old _random.shuffle(node_list).
+    node_ids_list = list(node_to_vms.keys())
+    n_nodes = len(node_ids_list)
+
+    node_ids  = np.array([int(nid) for nid in node_ids_list], dtype=np.int32)
+    node_dram = np.array([
+        float(np.asarray(machine_sz[node_to_machine[nid]], dtype=float)[mem_idx])
+        for nid in node_ids_list
+    ], dtype=np.float32)
+
+    node_offsets = np.zeros(n_nodes + 1, dtype=np.int32)
+    for i, nid in enumerate(node_ids_list):
+        node_offsets[i + 1] = node_offsets[i] + len(node_to_vms.get(nid, []))
+
+    total_entries = int(node_offsets[-1])
+    vm_ptrs = np.empty(total_entries, dtype=np.int32)
+    for i, nid in enumerate(node_ids_list):
+        lo = int(node_offsets[i])
+        for k, vmkey in enumerate(node_to_vms.get(nid, [])):
+            vm_ptrs[lo + k] = vmkey_to_idx[vmkey]
+
+    return TraceArrays(
+        vm_start=vm_start,
+        vm_end=vm_end,
+        vm_mem=vm_mem,
+        node_ids=node_ids,
+        node_dram=node_dram,
+        node_offsets=node_offsets,
+        vm_ptrs=vm_ptrs,
+    )
 
 
 # ---------------------------------------------------------------------------

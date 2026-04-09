@@ -1,0 +1,780 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{listings}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+  backgroundcolor=\color{backcolour},
+  commentstyle=\color{codegreen},
+  keywordstyle=\color{magenta},
+  numberstyle=\tiny\color{codegray},
+  stringstyle=\color{codepurple},
+  basicstyle=\ttfamily\footnotesize,
+  breakatwhitespace=false,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=5pt,
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{Training Run v2: Multi-Trace Augmentation, Throughput Debugging, and Reward~A}
+\author{Pulak Mehrotra}
+\date{March 28--30, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report documents the first end-to-end training runs of the Octopus
+CXL memory-pooling RL agent using the full 10-trace augmented dataset
+(\texttt{--multi-trace}, \texttt{--augmentation}, $N_\text{envs}=32$).
+Three system-level bugs were identified and fixed: a copy-on-write OOM
+during \texttt{SubprocVecEnv} fork, a pickle import-lock deadlock in
+parallel trace loading, and a \texttt{KeyError: 192} crash in
+\texttt{PoolingSavingsCallback} caused by building \texttt{mhd\_to\_hosts}
+from the base pod matrix rather than the full block-diagonal
+\texttt{expanded\_M}.
+Throughput profiling identified eval callbacks (not gradient updates or
+environment steps) as the true bottleneck, and a \texttt{train\_freq=8},
+\texttt{eval\_freq=100000} configuration restores $\approx$2,400~fps.
+The original reward (\texttt{current}) showed near-zero policy improvement;
+Reward~A with a 50-dim observation space is the active variant under test.
+\end{abstract}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Run Configuration}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\begin{lstlisting}[language=bash]
+python scripts/train_rl.py \
+  --run-id aug_all_traces \
+  --augmentation \
+  --multi-trace \
+  --aug-traces AMS20PrdApp19-tround BLAPrdApp19-troundgrt5m \
+               BN9PrdApp18-troundgrt5m DSM08PrdApp05-troundgrt5m \
+               DUB24PrdApp09-troundgrt5m LON23PrdApp01-troundgrt5m \
+               LVL01PrdApp05-troundgrt5m SG2PrdApp35-troundgrt5m \
+               SYD21PrdApp07-troundgrt5m YTO21PrdApp05-troundgrt5m \
+  --wandb --n-envs 32 --total-timesteps 500000
+\end{lstlisting}
+
+\noindent Key parameters: reward variant = \texttt{current}, $\lambda_\text{var}=0.5$,
+batch size~=~256, $\gamma=0.999$, \texttt{train\_freq}=1,
+\texttt{gradient\_steps}=1, network~=~[256,~256] MLP,
+eval trace = \texttt{LON23PrdApp01-troundgrt5m}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{System Fixes Required}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Copy-on-Write OOM During Worker Fork}
+
+The original run crashed silently after loading all 10 traces.
+The OOM killer terminated the process with no Python traceback.
+
+\textbf{Root cause.} Python's reference counting increments
+\texttt{ob\_refcnt} on every read of a Python object, which marks the
+memory page as dirty and triggers a copy-on-write copy in each forked
+subprocess. With 10 traces loaded as Python object graphs
+($\sim$53~GB in memory) and 32 workers each copying $\sim$7~GB of
+CoW pages, peak memory reached $\sim$277~GB on a 192~GB machine.
+
+\textbf{Fix.} Trace data is now converted to \texttt{TraceArrays}
+(7 numpy arrays: \texttt{vm\_start}, \texttt{vm\_end}, \texttt{vm\_mem},
+\texttt{node\_ids}, \texttt{node\_dram}, \texttt{node\_offsets},
+\texttt{vm\_ptrs}) via \texttt{octopus.data.to\_arrays()} before the
+\texttt{SubprocVecEnv} fork. Reading numpy C-heap buffers does not
+touch Python refcounts, so no CoW pages are generated.
+Total pool footprint dropped from $\sim$53~GB to $\sim$300~MB.
+
+\subsection{Pickle Import-Lock Deadlock in Parallel Loading}
+
+A \texttt{ThreadPoolExecutor} was used to load all 10 traces
+simultaneously. This deadlocked because \texttt{pickle.Unpickler.find\_class}
+calls \texttt{\_\_import\_\_}, which acquires Python's per-module import
+lock. Ten threads all calling \texttt{\_\_import\_\_} simultaneously
+caused a classic import-lock deadlock.
+
+\textbf{Fix.} Reverted to sequential loading. Startup time is
+$\approx$10.5~min, dominated by I/O-bound pickle deserialization and
+the \texttt{to\_arrays()} conversion.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Startup Time Breakdown}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Phase & Wall time & Cumulative \\
+\midrule
+W\&B init                      & 0:00 -- 0:09:30 & 9 min 30 s \\
+Training trace load + topology  & 0:09:30 -- 0:10:00 & 30 s \\
+10-trace pool load (sequential) & 0:10:00 -- 0:18:31 & 8 min 31 s \\
+SubprocVecEnv fork (32 workers) & 0:18:31 -- 0:20:34 & 2 min 03 s \\
+Eval trace load                 & 0:20:34 -- 0:20:56 & 22 s \\
+\midrule
+\textbf{Total to first step}    & & \textbf{$\approx$20 min 56 s} \\
+\bottomrule
+\end{tabular}
+\caption{Startup phases. Excluding W\&B, data loading accounts for
+$\approx$11 min 26 s.}
+\end{table}
+
+The 10-trace pool load scales linearly with trace size. The largest
+traces (SG2: 1.7~GB, BLA: 1.6~GB, BN9: 1.5~GB on disk) dominate,
+taking 60--80~s each. \texttt{to\_arrays()} conversion adds a fixed
+per-trace overhead of $\approx$5--15~s (tight Python loop over VM
+objects to extract int64 timestamps and float32 memory values).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Training Throughput}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Observed vs.\ Expected}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Checkpoint & \texttt{time\_elapsed} (s) & \texttt{total\_timesteps} & fps \\
+\midrule
+115,296  & 1,431 & 115,296 & 80 \\
+206,528  & 2,837 & 206,528 & 72 \\
+215,488  & 2,850 & 215,488 & 75 \\
+\midrule
+\textbf{Average} & & & \textbf{75} \\
+\bottomrule
+\end{tabular}
+\caption{Observed training throughput. fps = \texttt{total\_timesteps} /
+\texttt{time\_elapsed}.}
+\end{table}
+
+The benchmark from training-v1 with $N=32$ SubprocVecEnv was
+\textbf{1,221~fps}. The current run achieves \textbf{75~fps} --- a
+\textbf{16$\times$ regression}.
+
+\subsection{Projected Wall Times}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Total timesteps & Training time & + Startup ($\approx$11 min) \\
+\midrule
+500k   & 1.85 hr & $\approx$2.0 hr \\
+1M     & 3.7 hr  & $\approx$3.9 hr \\
+2M     & 7.4 hr  & $\approx$7.6 hr \\
+5M     & 18.5 hr & $\approx$18.7 hr \\
+\bottomrule
+\end{tabular}
+\caption{Projected run times at 75~fps. Overnight budget $\approx$8~hr
+$\Rightarrow$ 2M timesteps feasible.}
+\end{table}
+
+\subsection{Root Cause: Eval Callbacks, Not Gradient Updates}
+\label{sec:rootcause}
+
+Two profiling experiments identified the true bottleneck.
+
+\textbf{Experiment 1 — environment-only profiling} (no gradient updates,
+\texttt{scripts/profile\_throughput.py}):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Configuration & fps & vs.\ baseline \\
+\midrule
+Single trace, no aug, no multi-trace & 2,806 & 1.0$\times$ \\
++ Multi-trace only                    & 2,611 & 0.93$\times$ \\
++ Augmentation only                   & 2,760 & 0.98$\times$ \\
++ Both (current training config)      & 2,565 & 0.91$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Environment throughput without gradient updates.
+Augmentation and multi-trace have negligible impact ($<$10\%).
+All four run $\gg$75~fps — the env is not the bottleneck.}
+\end{table}
+
+\textbf{Experiment 2 — \texttt{train\_freq} sweep with gradient updates}
+(\texttt{scripts/smoke\_train\_freq.py}), $N=32$ envs, 3k steps, no callbacks:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrrrr}
+\toprule
+\texttt{train\_freq} & fps & vs.\ tf=1 & grad updates & grad mean & collect mean \\
+\midrule
+ 1 & 1,031 & 1.0$\times$ & 79 & 24 ms & ~5 ms \\
+ 4 & 1,790 & 1.7$\times$ & 21 & 24 ms & 23 ms \\
+ 8 & 2,454 & 2.4$\times$ & 11 & 19 ms & 33 ms \\
+16 & 2,715 & 2.6$\times$ &  6 & 17 ms & 65 ms \\
+32 & 2,484 & 2.4$\times$ &  3 & 24 ms & 167 ms \\
+\bottomrule
+\end{tabular}
+\caption{Each gradient update costs $\approx$20--25~ms. The system
+without callbacks reaches 1,000--2,700~fps depending on \texttt{train\_freq}.
+\texttt{train\_freq}=8 is the sweet spot: 2.4$\times$ speedup with 2$\times$
+more updates than tf=16 for better sample efficiency.}
+\end{table}
+
+\textbf{Conclusion.} The env+gradient system achieves
+$\approx$1,000~fps at \texttt{train\_freq}=1 without callbacks.
+Real training achieves 75~fps.
+The gap — $\approx$266~seconds per 20k-step eval window — is entirely
+attributable to eval callbacks:
+
+\begin{itemize}
+  \item \textbf{\texttt{PoolingSavingsCallback}} (dominant cost): runs
+        \texttt{pooling\_simulation} for 10 full inference episodes every
+        \texttt{--eval-freq=20000} steps. Each inference episode is
+        $\sim$7,000 serial steps. Total: $\sim$70,000 inference steps
+        per eval window, amortised as $\approx$220~ms per training step.
+  \item \textbf{\texttt{EvalCallback}}: 3 eval episodes $\times$~7,000 steps
+        $\approx$21,000 inference steps. Amortised $\approx$65~ms per
+        training step.
+\end{itemize}
+
+\subsection{Are the Callbacks Necessary?}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+\toprule
+Callback & Affects training? & Cost & Verdict \\
+\midrule
+\texttt{EvalCallback}          & \textbf{Yes} — saves \texttt{best\_model.zip} & Medium & Keep, raise freq \\
+\texttt{PoolingSavingsCallback} & No — diagnostic only                          & High   & Raise freq or drop \\
+\texttt{CheckpointCallback}    & No — periodic snapshots                       & Low    & Keep \\
+\texttt{SACDiagnosticsCallback} & No — logs Q/entropy                          & Negligible & Keep \\
+\texttt{WandbCallback}         & No — artifact upload                          & Low    & Keep \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{PoolingSavingsCallback} does \textbf{not} save checkpoints or
+influence the gradient signal. It is purely diagnostic and accounts for
+$\sim$80\% of callback overhead.}
+\end{table}
+
+\texttt{EvalCallback} is worth retaining because it is the only mechanism
+that saves the best policy during training --- critical if the reward
+improves then regresses. However, both callbacks should run far less frequently.
+
+\subsection{Projected Wall Times After Fix}
+
+Recommended config: \texttt{--train-freq 8 --eval-freq 100000}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Total timesteps & Estimated time & Notes \\
+\midrule
+500k  & $\sim$12 min  & \\
+1M    & $\sim$24 min  & \\
+2M    & $\sim$48 min  & Overnight budget \\
+5M    & $\sim$2 hr    & \\
+\bottomrule
+\end{tabular}
+\caption{Projected at $\approx$2,400~fps (tf=8, eval-freq=100k).
+Startup adds $\approx$11~min.}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Learning Signal Analysis}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Pooling Savings}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrr}
+\toprule
+Timesteps & \texttt{pooling\_savings\_mean} & \texttt{pooling\_savings\_std} \\
+\midrule
+20k  & 0.0048 & 0.0275 \\
+40k  & 0.0128 & 0.0164 \\
+60k  & 0.0156 & 0.0131 \\
+80k  & 0.0140 & 0.0128 \\
+100k & 0.0139 & 0.0119 \\
+120k & 0.0131 & 0.0148 \\
+140k & 0.0139 & 0.0151 \\
+160k & 0.0101 & 0.0132 \\
+180k & 0.0068 & 0.0131 \\
+200k & 0.0139 & 0.0090 \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{pooling\_savings\_mean} = fraction by which RL outperforms
+the greedy baseline on the eval trace (LON23). Standard deviation across
+10 eval episodes.}
+\end{table}
+
+The policy achieves \textbf{$\approx$1.4\% savings over greedy} at
+peak, but this improvement is \textbf{not monotonically increasing} and
+shows no upward trend after 60k steps. The savings are within one
+standard deviation of zero at most checkpoints, suggesting the policy
+has not found a meaningfully better strategy than the greedy baseline.
+
+\subsection{SAC Internals}
+
+Several internal SAC metrics signal problematic learning dynamics:
+
+\begin{itemize}
+  \item \textbf{Entropy collapse}: \texttt{ent\_coef} decays
+        monotonically from 0.837 (20k steps) to 0.155 (160k steps).
+        The policy is becoming deterministic, but without finding a
+        better optimum.
+  \item \textbf{Unchecked Q-value growth}: \texttt{q1\_mean} rises
+        from 12.5 to $>$70 over the run. This is consistent with
+        the Q-function tracking cumulative negative reward without a
+        bound, but at a rate suggesting value overestimation.
+  \item \textbf{Negative training-env savings}: \texttt{env/pooling\_savings}
+        is negative throughout ($-0.10$ to $-0.44$), meaning the
+        policy performs \textit{worse} than greedy on the training
+        traces --- it only marginally outperforms greedy on the
+        held-out eval trace.
+  \item \textbf{Critic loss converging}: \texttt{critic\_loss} drops
+        from 0.074 to 0.004, indicating the value function has
+        converged, but to a poor policy.
+\end{itemize}
+
+\subsection{Why Reward ``current'' Fails}
+
+The reward $R = -(\Delta\text{peak})/\text{fair\_share} - \lambda\cdot\text{Var}(\mathbf{c}/\text{fair\_share})$
+has three structural problems:
+
+\begin{enumerate}
+  \item \textbf{Sparse signal}: only the single worst MPD contributes
+        to the peak-delta term. Most decisions receive near-zero gradient.
+  \item \textbf{Myopic}: no lookahead. The agent cannot anticipate
+        departures or future arrivals, so it cannot balance load
+        over time.
+  \item \textbf{Scale sensitivity}: the fair-share normalization depends
+        on pod-level DRAM, which varies per episode under multi-trace
+        augmentation (5--7$\times$ scale range). The reward magnitude
+        is inconsistent across episodes, harming value function stability.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{First Reward~A Run: Crash and Fix}
+\label{sec:rewardA-crash}
+% ─────────────────────────────────────────────────────────────────────────────
+
+Armed with the throughput fixes (\texttt{train\_freq=8}, \texttt{eval\_freq=100000}),
+the first Reward~A run (\texttt{--run-id aug\_v2\_rewardA}) was launched.
+
+\subsection{Run Configuration}
+
+\begin{lstlisting}[language=bash]
+python scripts/train_rl.py \
+  --run-id aug_v2_rewardA \
+  --reward-variant A \
+  --augmentation --multi-trace \
+  --aug-traces AMS20PrdApp19-tround BLAPrdApp19-troundgrt5m \
+               BN9PrdApp18-troundgrt5m DSM08PrdApp05-troundgrt5m \
+               DUB24PrdApp09-troundgrt5m LON23PrdApp01-troundgrt5m \
+               LVL01PrdApp05-troundgrt5m SG2PrdApp35-troundgrt5m \
+               SYD21PrdApp07-troundgrt5m YTO21PrdApp05-troundgrt5m \
+  --n-envs 32 --total-timesteps 2000000 \
+  --train-freq 8 --eval-freq 100000
+\end{lstlisting}
+
+\subsection{Early Signal at 100k Steps}
+
+The first eval completed successfully at 100k steps:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr}
+\toprule
+Metric & Value \\
+\midrule
+\texttt{pooling\_ratio}      & 1.05 \\
+\texttt{pooling\_savings}    & $-$0.053 (5.3\% worse than greedy) \\
+\texttt{mean\_reward}        & $-$25.1 \\
+\texttt{episode\_length}     & 7,334 \\
+\texttt{critic\_loss}        & 0.112 \\
+\texttt{ent\_coef}           & 0.891 \\
+\texttt{n\_updates}          & 387 \\
+\bottomrule
+\end{tabular}
+\caption{Eval metrics at 100k steps. High entropy (0.891) and elevated critic loss
+indicate the policy is still in early exploration. Negative savings at 100k is
+expected for Reward~A --- the 50-dim observation requires more experience before
+the value function stabilises.}
+\end{table}
+
+\subsection{Crash: \texttt{KeyError: 192} in \texttt{PoolingSavingsCallback}}
+
+The run crashed immediately after the 100k-step eval (first checkpoint saved),
+during the next \texttt{PoolingSavingsCallback} invocation:
+
+\begin{lstlisting}
+File "scripts/evaluate.py", line 344, in _rl_alloc_cb
+    P_j = float(sum(host_cxl_load[h] for h in mhd_to_hosts[mhd]))
+KeyError: 192
+\end{lstlisting}
+
+\textbf{Root cause.} \texttt{expand\_M\_to\_all\_nodes} assembles a
+block-diagonal topology matrix where pod~0 occupies MPD columns 0--191,
+pod~1 occupies columns 192--383, and so on.
+The \texttt{mhd\_to\_hosts} dict was precomputed once from the base
+per-pod matrix~$M$ (192 entries, keys 0--191) and stored in the callback
+at startup.
+When the callback evaluated a pod sampled from block~1 or higher,
+\texttt{mhd\_list} contained global column indices $\geq$192,
+which were absent from \texttt{mhd\_to\_hosts}.
+
+The first eval (100k steps) happened to sample only pod~0 in all 10
+iterations (seed~99999--100008 all landed there), masking the bug.
+The second eval (200k steps) sampled at least one pod with index~$\geq$1,
+triggering the crash.
+
+\textbf{Fix.} \texttt{PoolingSavingsCallback.\_run\_eval()} now rebuilds
+\texttt{mhd\_to\_hosts} and \texttt{Q\_j} from \texttt{expanded\_M}
+inside each iteration, immediately after \texttt{expand\_M\_to\_all\_nodes}
+returns.  The rebuilt structures cover all $\text{num\_pods} \times 192$
+global MPD indices:
+
+\begin{lstlisting}[language=Python]
+node_to_M, expanded_M = expand_M_to_all_nodes(self._M, pod_to_nodes)
+if self._obs_variant != "current":
+    num_mhd_exp = len(expanded_M[0])
+    mhd_to_hosts_exp = {j: [] for j in range(num_mhd_exp)}
+    h_to_mhds = {}
+    for h, row in enumerate(expanded_M):
+        h_to_mhds[h] = [j for j, v in enumerate(row) if v]
+        for j in h_to_mhds[h]:
+            mhd_to_hosts_exp[j].append(h)
+    Q_j_exp = np.zeros(num_mhd_exp, dtype=np.float32)
+    for j in range(num_mhd_exp):
+        hosts = mhd_to_hosts_exp[j]
+        if hosts:
+            inv_deg = [1.0/len(h_to_mhds[h]) for h in hosts if h_to_mhds[h]]
+            if inv_deg:
+                Q_j_exp[j] = float(np.mean(inv_deg))
+\end{lstlisting}
+
+The pre-built \texttt{self.\_mhd\_to\_hosts} (base-pod scope) is no
+longer passed to \texttt{make\_rl\_alloc\_cb} for obs variants other
+than \texttt{current}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Run~v3: Callback Speed Regression and Inference Analysis}
+\label{sec:run3}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Observed Throughput}
+
+With the \texttt{KeyError} fix in place, run~v3 (\texttt{aug\_v2\_rewardA})
+trained at $\approx$43~fps overall --- worse than the 75~fps seen in the
+original run with \texttt{obs\_variant=current}.
+Between callback invocations the env+gradient rate was $\approx$860~fps,
+confirming the fix was correct and the training loop itself was healthy.
+Each \texttt{PoolingSavingsCallback} invocation was blocking for
+$\approx$38--39~minutes:
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Event & Wall time & \texttt{time\_elapsed} (s) \\
+\midrule
+Training start                       & 05:04:59 & 0 \\
+\texttt{PoolingSavings @ 100k steps} & 05:44:49 & 2,395 \\
+Training 104k $\to$ 182k (78k steps) & fast      & +88~s (860~fps) \\
+\texttt{PoolingSavings @ 200k steps} & 06:25:23 & 4,839 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+100k environment steps at 2,400~fps takes $\approx$42~s.
+The remaining $2{,}395 - 42 \approx 2{,}353$~s (39~min) per callback is
+pure Python and inference overhead.
+
+\subsection{Root Cause: D$_j$/S$_j$ Loop over Full Expanded Topology}
+
+Switching from \texttt{obs\_variant=current} to \texttt{A} enables
+\texttt{track\_vm\_allocs=True}, which activates the $D_j$/$S_j$ departure
+lookahead computation in \texttt{\_rl\_alloc\_cb}:
+
+\begin{lstlisting}[language=Python]
+D_j = np.zeros(num_mhd, dtype=np.float64)   # num_mhd = num_pods * 192
+for j in range(num_mhd):                     # ~11,904 iterations
+    for dt, mem in mpd_vm_allocs[j]:
+        ...
+\end{lstlisting}
+
+This loop ran for \textbf{every VM arrival event} across all pods.
+With the LON23 eval trace spanning $\sim$10 pods
+($\sim$100k total VM events across 10 simulation iterations),
+the total Python iteration count was:
+
+\[
+100{,}000 \text{ events} \times 11{,}904 \text{ MPDs} \times 10 \text{ iters}
+= 1.2\,\text{B iterations} \approx 38\text{ min at 10M\,iter/s}
+\]
+
+Only 8 of those 11,904 values were ever read (the \texttt{mhd\_list} for
+the current host). The remaining 11,896 were dead computation.
+
+\textbf{Fix.} Restrict $D_j$/$S_j$ to \texttt{mhd\_list} (max 8 MPDs):
+
+\begin{lstlisting}[language=Python]
+for k, mhd in enumerate(mhd_list):      # 8 iterations, not 11,904
+    dj = sj = 0.0
+    for dt, mem in mpd_vm_allocs[mhd]:
+        if dt <= t_plus_W:
+            dj += mem * (1.0 - (dt - tick) / W)
+        else:
+            sj += mem
+\end{lstlisting}
+
+Speedup on this loop: $11{,}904 / 8 \approx \mathbf{1{,}488\times}$.
+
+\subsection{Inference Path Analysis}
+
+With the $D_j$ fix, the remaining callback cost is dominated by
+$\sim$400k--1M calls to \texttt{model.predict}.
+Benchmarking the 50-dim $\to$ [256,\,256] $\to$ 8-dim MLP:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Mode & ms/call & calls/s \\
+\midrule
+GPU forward + \texttt{.cpu().numpy()} & 0.167 & 5,999 \\
+CPU forward (reused tensor)           & 1.156 & 864 \\
+CPU forward (new tensor/call)         & 1.105 & 904 \\
+\bottomrule
+\end{tabular}
+\caption{Single-sample inference cost for the 50-dim MLP.
+GPU wins by $7\times$ even for batch size~1 because CUDA kernel launch
+overhead (0.1\,ms) is lower than serial CPU GEMM for this model size.
+Moving to CPU would make inference \textbf{slower}, not faster.
+Batching is not possible: each allocation changes \texttt{cur\_cxl\_mem\_vec},
+making the simulation strictly sequential.}
+\end{table}
+
+\noindent\textbf{Why async RL does not help here.}
+Asynchronous RL (IMPALA, SEED~RL) decouples actor collection from learner
+gradient updates to keep the GPU busy during rollouts.
+Between callbacks, the system already achieves 860~fps and gradient updates
+cost only 19~ms.  Async RL would give at most a 1.3$\times$ improvement
+on the training loop and does nothing for callback overhead.
+
+\textbf{Inference fix.} SB3's \texttt{model.predict} wrapper calls
+\texttt{set\_training\_mode()} and allocates a new tensor on \textit{every}
+invocation. For the callback's serial inference loop these overheads dominate.
+The fix: extract the policy once, call \texttt{set\_training\_mode(False)}
+once, pre-allocate a GPU buffer, and call \texttt{policy.\_predict} directly:
+
+\begin{lstlisting}[language=Python]
+# Once at callback setup (make_rl_alloc_cb):
+policy = model.policy
+policy.set_training_mode(False)
+_obs_buf = torch.zeros(1, obs_dim, dtype=torch.float32, device=device)
+
+# Per VM arrival (no alloc, no set_training_mode):
+_obs_buf[0].copy_(torch.from_numpy(obs))   # zero-copy view + GPU transfer
+with torch.no_grad():
+    action = policy._predict(_obs_buf, deterministic=True).cpu().numpy()[0]
+\end{lstlisting}
+
+\subsection{Projected Callback Time After Both Fixes (Prediction)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Phase & Before (run~v3) & After $D_j$ fix & After both fixes \\
+\midrule
+$D_j$/$S_j$ loop (O(\texttt{num\_mhd})/event) & $\approx$35 min & $<$1 s  & $<$1 s \\
+Post-alloc tracking loop (O(\texttt{num\_mhd})/event) & included above & included above & $<$1 s \\
+Inference (733k calls $\times$ 0.167~ms)               & included above & $\approx$122 s & $\approx$122 s \\
+Numpy + purge overhead                                 & $\approx$2 min & $\approx$2 min & $\approx$10 s \\
+\midrule
+\textbf{Total per callback (predicted)} & \textbf{39 min} & \textbf{?} & \textbf{$\approx$2.2 min} \\
+\bottomrule
+\end{tabular}
+\caption{Predicted callback cost. The $D_j$ fix was applied for run~v3 but the
+post-allocation tracking loop was missed; run~v4 measures the actual result.}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Run~v4: Full 2M-Step Reward~A Run}
+\label{sec:run4}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Configuration}
+
+Run~v4 (\texttt{aug\_v3\_rewardA}) used the $D_j$ fix and the inference fix
+but \textit{not} the post-allocation loop fix (discovered later):
+
+\begin{lstlisting}[language=bash]
+python -u scripts/train_rl.py \
+  --run-id aug_v3_rewardA --reward-variant A \
+  --augmentation --multi-trace \
+  --aug-traces AMS20PrdApp19-tround ... \
+  --n-envs 32 --total-timesteps 2000000 \
+  --train-freq 8 --eval-freq 100000 \
+  2>&1 | tee run4.txt
+\end{lstlisting}
+
+\subsection{Time Budget (Measured)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Phase & Duration & \% of total \\
+\midrule
+Startup (trace load + fork)        & 11 min 1 s  & 6.5\% \\
+Actual training (env + grad)       & 13 min 35 s & 7.9\% \\
+Callbacks (20 $\times$ 7.3~min)    & 146 min 28 s & \textbf{85.6\%} \\
+\midrule
+\textbf{Total}                     & \textbf{2 hr 50 min 39 s} & 100\% \\
+\bottomrule
+\end{tabular}
+\caption{Exact time budget for run~v4 (2M timesteps).
+20 callback windows averaged 480.2~s each (vs.\ 40.7~s of actual training).
+The env+gradient system ran at $\approx$2,454~fps between callbacks,
+consistent with the \texttt{train\_freq}=8 smoke test.
+All overhead is in the callback.}
+\end{table}
+
+\subsection{Second O(\texttt{num\_mhd}) Bug: Post-Allocation Tracking Loop}
+
+Despite the $D_j$/S$_j$ fix, each callback still took 7.3~min instead of
+the predicted 2.5~min. Root cause: a second identical O(\texttt{num\_mhd})
+loop in \texttt{pooling\_simulation} (evaluate.py, after \texttt{alloc\_fn}
+returns):
+
+\begin{lstlisting}[language=Python]
+# BEFORE — O(11,904) per VM arrival event:
+for j in range(num_mhd):
+    if alloc_vec[j] > 0 and dealloc_time < pod_dur:
+        mpd_vm_allocs[j].append((dealloc_time, float(alloc_vec[j])))
+\end{lstlisting}
+
+\texttt{alloc\_vec} is a 11,904-element array but only 8 entries
+(the \texttt{mhd\_list} for the current host) are non-zero.
+Iterating over all 11,904 elements to find 8 non-zero ones mirrors the
+$D_j$/$S_j$ bug exactly.
+With 733,400 total events across 10 simulation iterations:
+
+\[
+733{,}400 \times 11{,}904 = 8.73\,\text{B iterations} \approx 5\text{ min extra per callback}
+\]
+
+\textbf{Fix.} Iterate over \texttt{mhd\_list} directly (8 iterations, not 11,904):
+
+\begin{lstlisting}[language=Python]
+# AFTER — O(8) per VM arrival event:
+for mhd in mhd_list:
+    if alloc_vec[mhd] > 0 and dealloc_time < pod_dur:
+        mpd_vm_allocs[mhd].append((dealloc_time, float(alloc_vec[mhd])))
+\end{lstlisting}
+
+\subsection{Predicted Time Budget After All Fixes (Run~v5)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Phase & Run~v4 (measured) & Run~v5 (predicted) \\
+\midrule
+Startup                  & 11 min  & 11 min \\
+Training                 & 14 min  & 14 min \\
+Callbacks (20 $\times$)  & 147 min (7.3~min each) & 44 min (2.2~min each) \\
+\midrule
+\textbf{Total}           & \textbf{2 hr 51 min}   & \textbf{$\approx$69 min} \\
+\bottomrule
+\end{tabular}
+\caption{Predicted run~v5 time budget after fixing the post-allocation tracking loop.
+The callback cost breakdown for run~v5: inference 122~s + D$_j$ $<$1~s +
+post-alloc $<$1~s + numpy/purge 10~s $=$ 133~s $\approx$ 2.2~min per callback.}
+\end{table}
+
+\subsection{Learning Signal (Run~v4)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrr}
+\toprule
+Timesteps & \texttt{pooling\_savings\_mean} & \texttt{std} & \texttt{ent\_coef} \\
+\midrule
+100k  & 0.0137 &  0.0185 & 0.891 \\
+300k  & 0.0138 &  0.0098 & 0.705 \\
+500k  & 0.0136 &  0.0095 & 0.605 \\
+700k  & 0.0122 &  0.0132 & 0.487 \\
+900k  & 0.0121 &  0.0122 & 0.393 \\
+1100k & 0.0148 &  0.0177 & 0.308 \\
+1300k & 0.0133 &  0.0100 & 0.263 \\
+1500k & 0.0133 &  0.0165 & 0.224 \\
+1700k & 0.0041 &  0.0203 & 0.192 \\
+1900k & 0.0018 &  0.0267 & 0.167 \\
+2000k & 0.0142 &  0.0181 & 0.155 \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{pooling\_savings\_mean} = fraction by which Reward~A policy
+outperforms greedy on LON23 eval trace. Policy achieves $\approx$1.4\%
+savings early but does not improve monotonically. High variance relative
+to mean suggests the policy has not converged. \texttt{ent\_coef} decays
+steadily (0.891 $\to$ 0.155), indicating the policy is collapsing to a
+near-deterministic strategy without finding a significantly better optimum
+than greedy.}
+\end{table}
+
+\subsection{Execution Diagnoser}
+
+A sidecar monitoring script (\texttt{scripts/monitor\_run.py}) was written to
+diagnose future runs.  It samples GPU utilisation, CPU, and RAM every 10~s,
+detects callback boundaries by tailing the run log, and produces a phase
+breakdown and JSON sidecar on exit:
+
+\begin{lstlisting}[language=bash]
+# Terminal 2 (alongside training):
+python scripts/monitor_run.py --log run5.txt --interval 10
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Next Steps}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\begin{enumerate}
+  \item \textbf{Run~v5: Reward~A with post-allocation loop fix.}
+        All three O(\texttt{num\_mhd}) bugs now fixed.
+        Expected: $\approx$69~min total for 2M steps.
+        Monitor with \texttt{scripts/monitor\_run.py} to verify callback drops
+        to $\approx$2.2~min.
+
+  \item \textbf{Convergence criterion.} No fixed step budget.
+        Stop when \texttt{pooling\_savings\_mean} plateaus over
+        3--5 consecutive eval windows.
+        Target: $>0\%$ beats greedy; $>1.5\%$ is a strong result.
+        Savings are currently flat ($\sim$1.2\% mean, high variance) ---
+        2M steps may be insufficient; extend to 5M if needed.
+
+  \item \textbf{Reward~B ablation} once Reward~A converges.
+\end{enumerate}
+
+\end{document}

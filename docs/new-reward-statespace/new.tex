@@ -1,0 +1,439 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+\title{Reward Function and State Space\\
+\large Octopus CXL Memory Pooling --- RL Redesign}
+\author{Pulak Mehrotra}
+\date{}
+
+\begin{document}
+\maketitle
+
+% -----------------------------------------------------------------------
+\section*{Notation}
+
+\begin{tabular}{ll}
+$m$                    & number of MPDs in the pod \\
+$[m]$                  & set $\{1, \ldots, m\}$ \\
+$N(i)$                 & MPDs reachable from host $i$ \\
+$H(j)$                 & hosts connected to MPD $j$ \\
+$\deg(h)$              & degree of host $h$, i.e.\ $|N(h)|$ \\
+$c_j(t)$               & current allocated load on MPD $j$ at time $t$ (GB) \\
+$\ell_h(t)$            & current CXL load sourced by host $h$ at time $t$ (GB) \\
+$\mathcal{V}_j(t)$     & VMs currently allocated on MPD $j$ at time $t$ \\
+$\mathrm{mem}(v)$      & allocated memory of VM $v$ (GB) \\
+$\mathrm{end}(v)$      & predicted departure time of VM $v$;
+                         computed from trace during training,
+                         and from a lifetime prediction model
+                         at deployment \cite{pond2023} \\
+$x$                    & memory request of the arriving VM (GB) \\
+$\mathbf{w}$           & allocation weight vector,
+                         $w_j \geq 0$,
+                         $\sum_{j \in N(i)} w_j = 1$,
+                         $w_j = 0$ if $j \notin N(i)$ \\
+$W$                    & lookahead window (timesteps; target $150$--$300$) \\
+$D_\mathrm{pod}$       & total pod DRAM capacity (GB); used for normalisation \\
+$\lambda$              & Reward-B global-term weight ($\lambda < 1$;
+                         start $0.1$--$0.3$) \\
+$d_\mathrm{max}$       & maximum host degree in the topology \\
+\end{tabular}
+
+% -----------------------------------------------------------------------
+\section{Reward Function}
+
+\subsection{Departure Relief}
+
+Define the time-weighted departure relief on MPD $j$ over the
+lookahead window $[t,\; t{+}W]$:
+
+\begin{equation}
+    D_j(t, W)
+    \;=\;
+    \sum_{\substack{v \,\in\, \mathcal{V}_j(t) \\
+                    \mathrm{end}(v) \;\leq\; t + W}}
+    \mathrm{mem}(v)
+    \cdot
+    \left(1 - \frac{\mathrm{end}(v) - t}{W}\right)
+    \label{eq:departure}
+\end{equation}
+
+Each VM's contribution is weighted by how soon it departs: a VM
+departing at $t{+}1$ receives weight $\approx 1$ (near-certain
+relief); a VM departing at $t{+}W$ receives weight $\approx 0$.
+VMs departing after $t{+}W$ do not contribute to $D_j$ and
+instead constitute the sticky load (Section~\ref{sec:state}).
+
+\subsection{Projected Load}
+
+The projected load on MPD $j$ before placement is:
+
+\begin{equation}
+    \hat{c}_j(t)
+    \;=\;
+    \frac{c_j(t) \;-\; D_j(t, W)}{D_\mathrm{pod}}
+    \label{eq:chat}
+\end{equation}
+
+After the agent applies allocation $\mathbf{w}$, the projected load
+on each reachable MPD $j \in N(i)$ is updated:
+
+\begin{equation}
+    \hat{c}_j^{\,+}(t)
+    \;=\;
+    \hat{c}_j(t)
+    \;+\;
+    \frac{w_j \cdot x}{D_\mathrm{pod}}
+    \label{eq:chat-post}
+\end{equation}
+
+\subsection{Reward}
+
+\paragraph{Reward A: local projected-peak baseline.}
+\begin{equation}
+\boxed{
+    R_A(t)
+    \;=\;
+    -\,\max_{j \,\in\, N(i)}\, \hat{c}_j^{\,+}(t)
+}
+\label{eq:reward-a}
+\end{equation}
+
+This is the default baseline reward.  It penalises the worst projected
+load among the MPDs the current host can directly influence, keeping the
+signal local and easy to interpret.
+
+\paragraph{Reward B: local projected peak plus coarse global term.}
+\begin{equation}
+\boxed{
+    R_B(t)
+    \;=\;
+    -\,\max_{j \,\in\, N(i)}\, \hat{c}_j^{\,+}(t)
+    \;-\;
+    \lambda \cdot \max_{j \,\notin\, N(i)}\, \hat{c}_j(t)
+}
+\label{eq:reward-b}
+\end{equation}
+
+Reward B is an ablation variant that adds a coarse global-stress term.
+The first term is identical to Reward A.  The second term, down-weighted
+by $\lambda$, penalises the projected peak among unreachable MPDs.  Its
+purpose is to test whether coarse pod-level stress helps value
+estimation beyond the local baseline.
+
+All values are normalised by $D_\mathrm{pod}$.  Reward A lies in
+$(-1, 0]$.  Reward B lies in $(-(1+\lambda), 0]$.  This keeps both
+reward variants on a stable scale across traces and pod sizes.
+
+% -----------------------------------------------------------------------
+\section{State Space}
+\label{sec:state}
+
+\subsection{Design Principle}
+
+The state is shared across Reward A and Reward B.  Its main job is to
+describe, for each reachable MPD, both
+\emph{(i)} how much load is currently there and how much of that load is
+likely to drain soon, and
+\emph{(ii)} how contested that MPD is by nearby hosts.
+This keeps the baseline design local and interpretable while exposing
+the neighborhood structure that greedy does not model explicitly.
+
+\subsection{Per-MPD Features}
+
+The following features are computed for each MPD slot
+$k = 1, \ldots, d_\mathrm{max}$, zero-padded for slots
+$k > |N(i)|$:
+
+\begin{align}
+    \phi_k^{(1)} &\;=\;
+        \frac{c_{j_k}(t)}{D_\mathrm{pod}}
+        && \text{current allocated load on MPD } j_k
+        \label{eq:phi1} \\[6pt]
+    \phi_k^{(2)} &\;=\;
+        \frac{D_{j_k}(t,\,W)}{D_\mathrm{pod}}
+        && \text{time-weighted departures within } W \text{ steps}
+        \label{eq:phi2} \\[6pt]
+    \phi_k^{(3)} &\;=\;
+        \frac{S_{j_k}(t)}{D_\mathrm{pod}}
+        && \text{sticky load (departs after } W \text{ steps)}
+        \label{eq:phi3} \\[6pt]
+    \phi_k^{(4)} &\;=\;
+        \mathbf{1}\bigl[j_k \in N(i)\bigr]
+        && \text{connectivity mask / action validity}
+        \label{eq:phi4} \\[6pt]
+    \phi_k^{(5)} &\;=\;
+        \frac{P_{j_k}(t)}{D_\mathrm{pod}}
+        && \text{neighborhood pressure on MPD } j_k
+        \label{eq:phi5} \\[6pt]
+    \phi_k^{(6)} &\;=\;
+        Q_{j_k}
+        && \text{neighbor scarcity around MPD } j_k
+        \label{eq:phi6}
+\end{align}
+
+where the sticky load is defined as:
+
+\begin{equation}
+    S_j(t)
+    \;=\;
+    \sum_{\substack{v \,\in\, \mathcal{V}_j(t) \\
+                    \mathrm{end}(v) \;>\; t + W}}
+    \mathrm{mem}(v)
+    \label{eq:sticky}
+\end{equation}
+
+and the two neighborhood-contention features are defined as:
+
+\begin{align}
+    P_j(t)
+    &\;=\;
+    \sum_{h \in H(j)} \ell_h(t)
+    && \text{total current host pressure from hosts attached to } j
+    \label{eq:pressure} \\[6pt]
+    Q_j
+    &\;=\;
+    \frac{1}{|H(j)|}
+    \sum_{h \in H(j)}
+    \frac{1}{\deg(h)}
+    && \text{average scarcity of alternatives among hosts attached to } j
+    \label{eq:scarcity}
+\end{align}
+
+Note that $\phi_k^{(1)} = \phi_k^{(2)} + \phi_k^{(3)}$ up to
+normalisation: current load decomposes exactly into draining and
+sticky components.  The agent is therefore given the full
+decomposition of $\hat{c}_j$ directly rather than having to
+infer it from a single load snapshot.  The added
+$\phi^{(5)}$ and $\phi^{(6)}$ terms provide a simple 2-hop summary of
+which reachable MPDs are likely to be needed by neighboring hosts.
+
+\subsection{Global Context Features}
+
+\begin{align}
+    \psi^{(1)} &\;=\;
+        \frac{\displaystyle\max_{j \in [m]}\, c_j(t)}{D_\mathrm{pod}}
+        && \text{global peak load (used only by Reward B)}
+        \label{eq:psi1} \\[6pt]
+    \psi^{(2)} &\;=\;
+        \frac{x}{D_\mathrm{pod}}
+        && \text{arriving VM size}
+        \label{eq:psi2}
+\end{align}
+
+\subsection{Full Observation Vector}
+
+\begin{equation}
+    s_t
+    \;=\;
+    \Bigl[
+        \phi_1^{(1:6)},\;
+        \phi_2^{(1:6)},\;
+        \ldots,\;
+        \phi_{d_\mathrm{max}}^{(1:6)},\;
+        \psi^{(1)},\;
+        \psi^{(2)}
+    \Bigr]
+    \;\in\; \mathbb{R}^{\,6 d_\mathrm{max} \,+\, 2}
+    \label{eq:obs}
+\end{equation}
+
+For the AG16x6 topology ($d_\mathrm{max} = 8$) this yields a
+$\mathbf{50}$-dimensional observation vector.
+
+\subsection{State--Reward Alignment}
+
+\begin{table}[h]
+\centering
+\caption{Shared state features used by Reward A and Reward B.}
+\label{tab:alignment}
+\begin{tabular}{lll}
+\toprule
+Feature & Reward quantity & Role \\
+\midrule
+$\phi^{(1)}$   & $c_j / D_\mathrm{pod}$
+               & Starting point for $\hat{c}_j$ \\
+$\phi^{(2)}$   & $D_j(t,W) / D_\mathrm{pod}$
+               & Draining component of $\hat{c}_j$ \\
+$\phi^{(3)}$   & $S_j(t) / D_\mathrm{pod}$
+               & Permanent component of $\hat{c}_j$ \\
+$\phi^{(4)}$   & Action mask
+               & Enforces topology constraint \\
+$\phi^{(5)}$   & $P_j(t) / D_\mathrm{pod}$
+               & Neighborhood contention around MPD $j$ \\
+$\phi^{(6)}$   & $Q_j$
+               & Scarcity of alternatives for nearby hosts \\
+$\psi^{(1)}$   & $\max_j c_j / D_\mathrm{pod}$
+               & Coarse global context for Reward B only \\
+$\psi^{(2)}$   & $x / D_\mathrm{pod}$
+               & Post-placement update magnitude \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Comparison with v0}
+
+\begin{table}[h]
+\centering
+\caption{State space comparison.}
+\label{tab:comparison}
+\begin{tabular}{lll}
+\toprule
+Feature & v0 & This work \\
+\midrule
+Current MPD load          & \checkmark & \checkmark \\
+Connectivity mask         & \checkmark & \checkmark \\
+Arriving VM size          & \checkmark & \checkmark \\
+Global peak load          & \checkmark & \checkmark \\
+Departure relief $D_j(W)$ & $\times$   & \checkmark \\
+Sticky load $S_j$         & $\times$   & \checkmark \\
+Neighborhood pressure $P_j$ & $\times$ & \checkmark \\
+Neighbor scarcity $Q_j$   & $\times$   & \checkmark \\
+\midrule
+Dimensions (AG16x6)       & 20         & 50         \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Relative to v0, the added dimensions come from two sources:
+future-pressure decomposition $(D_j, S_j)$ and neighborhood-contention
+signals $(P_j, Q_j)$.  Together they tell the policy not only what load
+may drain soon, but also which reachable MPDs are strategically valuable
+because they serve a more constrained neighborhood.
+
+% -----------------------------------------------------------------------
+\section{Hyperparameters}
+
+\begin{table}[h]
+\centering
+\caption{Tunable hyperparameters.}
+\label{tab:hyperparams}
+\begin{tabular}{lll}
+\toprule
+Parameter & Role & Starting value \\
+\midrule
+$W$       & Lookahead window
+          & $150$--$300$ steps ($12.5$--$25$\,hr at 5-min resolution) \\
+$\lambda$ & Reward-B global-term weight
+          & $0.1$--$0.3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+$W$ should be set to at least the median VM lifetime in the trace.
+The future-knowledge ablation \cite{futurek} shows that the
+marginal value of lookahead is low below $\approx\!150$ steps and
+rises steeply above that threshold, justifying the lower bound.
+$\lambda$ is only used in Reward B.  It should be kept small enough
+that the local term still dominates the reward gradient across a
+training batch; verify empirically before scaling to 96-host pods.
+
+% -----------------------------------------------------------------------
+\section{Potential Issues to Validate}
+
+This section records the main formulation risks to check during
+implementation and ablation.  These are not claims that the design
+cannot work; they are the most likely places where the reward/state
+proposal could fail to beat greedy or could produce misleading
+training signal.
+
+\subsection{Highest-Priority Risks}
+
+\begin{enumerate}
+    \item \textbf{Reward B's $\lambda$ term is only a coarse ablation.}
+    The Reward B term
+    $\max_{j \notin N(i)} \hat{c}_j(t)$ is not reconstructed exactly by
+    the shared state.  This is acceptable for an ablation, but Reward B
+    should not be described as a perfectly aligned state--reward design.
+
+    \item \textbf{Reward B's $\lambda$ term may be action-independent at each step.}
+    For a given VM arrival, the agent cannot change the loads of
+    unreachable MPDs.  As written, the second reward term may therefore
+    be constant with respect to the current action, which can add critic
+    noise without helping the policy distinguish better placements.
+    This should be checked empirically before relying on it as useful
+    shaping.
+
+    \item \textbf{Missing lifetime signal for the arriving VM.}
+    The redesign distinguishes draining load from sticky load for
+    already-placed VMs, but the state includes only the arriving VM size
+    $x$, not the arriving VM's predicted lifetime.  If the new VM itself
+    can be short-lived or long-lived, then the policy is missing a key
+    variable needed to reason about whether the new placement will
+    create future pressure.
+
+    \item \textbf{No explicit feasibility / overflow term is documented.}
+    The reward penalises projected load but does not explicitly encode a
+    hard penalty for exceeding MPD capacity.  If infeasible allocations
+    are blocked by an action mask or safety layer, that should be stated
+    clearly.  If not, the policy may optimise the smooth peak surrogate
+    while still learning unsafe behavior near capacity.
+\end{enumerate}
+
+\subsection{Secondary Risks}
+
+\begin{enumerate}
+    \item \textbf{Reward ranges should be reported per variant.}
+    Reward A and Reward B have different lower bounds.  The text should
+    keep those bounds separate rather than describing a single shared
+    range for all reward variants.
+
+    \item \textbf{Normalising by $D_\mathrm{pod}$ may weaken local signal.}
+    The systems objective is driven by per-MPD peaks, but
+    $D_\mathrm{pod}$ grows with pod size.  The same bad local placement
+    can therefore produce a smaller reward difference in larger pods.
+    A per-MPD capacity scale, or a fair-share normalization, may align
+    better with the actual control objective.
+
+    \item \textbf{The reward may remain close to a future-aware greedy rule.}
+    The first term still behaves like ``minimise the post-placement
+    projected local maximum over reachable MPDs.''  That is a reasonable
+    heuristic, but it is not obviously the same as minimising the final
+    trace-wide peak.  The formulation should be validated by checking
+    whether greedy, random, and stronger baselines rank correctly under
+    this reward on held-out traces.
+
+    \item \textbf{Neighborhood contention features need empirical validation.}
+    The new $P_j$ and $Q_j$ signals are intentionally simple summaries of
+    local competition.  They may help beat greedy, but they should still
+    be ablated to confirm that they improve decisions rather than just
+    adding noise.
+
+    \item \textbf{Slot ordering may create a permutation problem.}
+    The observation is written as slot-indexed features
+    $\phi_k^{(1:4)}$.  If MPDs are not placed into those slots using a
+    canonical order, then equivalent neighborhoods may appear as
+    different input vectors across episodes, making the MLP learn a
+    harder permutation-sensitive task than intended.
+\end{enumerate}
+
+\subsection{Clarifying Questions to Resolve}
+
+\begin{itemize}
+    \item Is $D_\mathrm{pod}$ total pod DRAM, total MPD capacity, or a
+    fair-share normalization constant?
+    \item Is the arriving VM's lifetime known at decision time, or does
+    deployment require a predictor for that quantity as well?
+    \item Are capacity violations prevented by a hard mechanism outside
+    the reward, or should the reward itself teach the policy that
+    infeasible actions are unacceptable?
+\end{itemize}
+
+% -----------------------------------------------------------------------
+\bibliographystyle{plain}
+\begin{thebibliography}{9}
+\bibitem{pond2023}
+Huaicheng Li, Daniel S.\ Berger, Lisa Hsu, et al.
+\newblock Pond: {CXL}-Based Memory Pooling Systems for Cloud Platforms.
+\newblock In \textit{ASPLOS}, 2023.
+
+\bibitem{futurek}
+Richard Uzeel.
+\newblock Perfect Future Knowledge.
+\newblock Internal project report, 2026.
+\end{thebibliography}
+
+\end{document}

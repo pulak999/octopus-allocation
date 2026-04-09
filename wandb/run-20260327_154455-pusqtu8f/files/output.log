@@ -1,0 +1,22 @@
+W&B run: https://wandb.ai/pm3371-columbia-university/cxl-memory-pooling/runs/pusqtu8f
+Config saved → output/checkpoints/aug_all_traces/config.json
+Loading training trace: AMS20PrdApp19-tround.sqlite …
+Topology: 96 hosts, 192 MPDs, max_degree=8
+Augmentation: scale=[0.7, 1.2] noise_sigma=0.0 jitter=0 lifetime=0.0 link_fail=0.0 multi_trace=True
+  Loading trace for pool: AMS20PrdApp01-tround.sqlite …
+Traceback (most recent call last):
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 651, in <module>
+    main()
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 440, in main
+    trace_pool.append(_lt(tn))
+  File "/home/pm3371/gitrepos/octopus-allocation/octopus/data.py", line 77, in load_trace
+    with open(path, "rb") as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'data/traces/AMS20PrdApp01-tround.sqlite.pkl'
+Traceback (most recent call last):
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 651, in <module>
+    main()
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 440, in main
+    trace_pool.append(_lt(tn))
+  File "/home/pm3371/gitrepos/octopus-allocation/octopus/data.py", line 77, in load_trace
+    with open(path, "rb") as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'data/traces/AMS20PrdApp01-tround.sqlite.pkl'

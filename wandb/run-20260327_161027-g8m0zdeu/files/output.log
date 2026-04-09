@@ -1,0 +1,72 @@
+W&B run: https://wandb.ai/pm3371-columbia-university/cxl-memory-pooling/runs/g8m0zdeu
+Config saved → output/checkpoints/aug_all_traces/config.json
+Loading training trace: AMS20PrdApp19-tround.sqlite …
+Topology: 96 hosts, 192 MPDs, max_degree=8
+Augmentation: scale=[0.7, 1.2] noise_sigma=0.0 jitter=0 lifetime=0.0 link_fail=0.0 multi_trace=True
+  Loading trace for pool: AMS20PrdApp19-tround.sqlite …
+  Loading trace for pool: BLAPrdApp19-troundgrt5m.sqlite …
+  Loading trace for pool: BN9PrdApp18-troundgrt5m.sqlite …
+  Loading trace for pool: DSM08PrdApp05-troundgrt5m.sqlite …
+  Loading trace for pool: DUB24PrdApp09-troundgrt5m.sqlite …
+  Loading trace for pool: LON23PrdApp01-troundgrt5m.sqlite …
+  Loading trace for pool: LVL01PrdApp05-troundgrt5m.sqlite …
+  Loading trace for pool: SG2PrdApp35-troundgrt5m.sqlite …
+  Loading trace for pool: SYD21PrdApp07-troundgrt5m.sqlite …
+  Loading trace for pool: YTO21PrdApp05-troundgrt5m.sqlite …
+  Loaded 10 traces into pool
+Traceback (most recent call last):
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 661, in <module>
+    if wandb_run is not None:
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 500, in main
+    trace_pool=trace_pool,
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/vec_env/subproc_vec_env.py", line 122, in __init__
+    process.start()
+  File "/usr/lib/python3.10/multiprocessing/process.py", line 121, in start
+    self._popen = self._Popen(self)
+  File "/usr/lib/python3.10/multiprocessing/context.py", line 300, in _Popen
+    return Popen(process_obj)
+  File "/usr/lib/python3.10/multiprocessing/popen_forkserver.py", line 35, in __init__
+    super().__init__(process_obj)
+  File "/usr/lib/python3.10/multiprocessing/popen_fork.py", line 19, in __init__
+    self._launch(process_obj)
+  File "/usr/lib/python3.10/multiprocessing/popen_forkserver.py", line 47, in _launch
+    reduction.dump(process_obj, buf)
+  File "/usr/lib/python3.10/multiprocessing/reduction.py", line 60, in dump
+    ForkingPickler(file, protocol).dump(obj)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/vec_env/base_vec_env.py", line 498, in __getstate__
+    return cloudpickle.dumps(self.var)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/cloudpickle/cloudpickle.py", line 1544, in dumps
+    cp.dump(obj)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/cloudpickle/cloudpickle.py", line 1313, in dump
+    return super().dump(obj)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/cloudpickle/cloudpickle.py", line 1355, in reducer_override
+    def reducer_override(self, obj):
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 661, in <module>
+    if wandb_run is not None:
+  File "/home/pm3371/gitrepos/octopus-allocation/scripts/train_rl.py", line 500, in main
+    trace_pool=trace_pool,
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/vec_env/subproc_vec_env.py", line 122, in __init__
+    process.start()
+  File "/usr/lib/python3.10/multiprocessing/process.py", line 121, in start
+    self._popen = self._Popen(self)
+  File "/usr/lib/python3.10/multiprocessing/context.py", line 300, in _Popen
+    return Popen(process_obj)
+  File "/usr/lib/python3.10/multiprocessing/popen_forkserver.py", line 35, in __init__
+    super().__init__(process_obj)
+  File "/usr/lib/python3.10/multiprocessing/popen_fork.py", line 19, in __init__
+    self._launch(process_obj)
+  File "/usr/lib/python3.10/multiprocessing/popen_forkserver.py", line 47, in _launch
+    reduction.dump(process_obj, buf)
+  File "/usr/lib/python3.10/multiprocessing/reduction.py", line 60, in dump
+    ForkingPickler(file, protocol).dump(obj)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/vec_env/base_vec_env.py", line 498, in __getstate__
+    return cloudpickle.dumps(self.var)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/cloudpickle/cloudpickle.py", line 1544, in dumps
+    cp.dump(obj)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/cloudpickle/cloudpickle.py", line 1313, in dump
+    return super().dump(obj)
+  File "/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/cloudpickle/cloudpickle.py", line 1355, in reducer_override
+    def reducer_override(self, obj):
+KeyboardInterrupt

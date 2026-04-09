@@ -8,12 +8,20 @@ Usage
   python train.py                                      # defaults: SAC, AG16x6, AMS20
   python train.py --algo ppo --total-timesteps 2000000
   python train.py --device cuda:0                      # pin to first Titan
+
+  From repo root: pip install -e .   # optional; avoids manual PYTHONPATH
 """
+
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import argparse
 import os
 import random
-import sys
 
 import numpy as np
 import torch

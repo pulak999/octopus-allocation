@@ -1,0 +1,19 @@
+2026-03-27 16:37:07,226 INFO    MainThread:987930 [wandb_setup.py:_flush():81] Current SDK version is 0.25.1
+2026-03-27 16:37:07,227 INFO    MainThread:987930 [wandb_setup.py:_flush():81] Configure stats pid to 987930
+2026-03-27 16:37:07,227 INFO    MainThread:987930 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-03-27 16:37:07,228 INFO    MainThread:987930 [wandb_init.py:setup_run_log_directory():717] Logging user logs to /home/pm3371/gitrepos/octopus-allocation/wandb/run-20260327_163707-k6ymhydv/logs/debug.log
+2026-03-27 16:37:07,229 INFO    MainThread:987930 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to /home/pm3371/gitrepos/octopus-allocation/wandb/run-20260327_163707-k6ymhydv/logs/debug-internal.log
+2026-03-27 16:37:07,238 INFO    MainThread:987930 [wandb_init.py:init():844] calling init triggers
+2026-03-27 16:37:07,239 INFO    MainThread:987930 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'run_id': 'aug_all_traces', 'algo': 'sac', 'trace': 'AMS20PrdApp19-tround.sqlite', 'eval_trace': 'LON23PrdApp01-troundgrt5m.sqlite', 'topology': 'data/topologies/AG16x6_expander_quads_r5_sym_fixed.csv', 'total_timesteps': 500000, 'seed': 42, 'device': 'auto', 'checkpoint_freq': 10000, 'eval_freq': 20000, 'variance_lambda': 0.5, 'n_envs': 32, 'traces': None, 'no_train': False, 'fast': False, 'skip_hotfix': False, 'wandb': True, 'wandb_project': 'cxl-memory-pooling', 'reward_variant': 'current', 'lookahead_window': 200, 'reward_lambda': 0.2, 'augmentation': True, 'aug_scale_lo': 0.7, 'aug_scale_hi': 1.2, 'aug_scale_dist': 'triangular', 'aug_memory_noise': 0.0, 'aug_jitter': 0, 'aug_lifetime_noise': 0.0, 'aug_link_failures': 0.0, 'multi_trace': True, 'aug_traces': ['AMS20PrdApp19-tround', 'BLAPrdApp19-troundgrt5m', 'BN9PrdApp18-troundgrt5m', 'DSM08PrdApp05-troundgrt5m', 'DUB24PrdApp09-troundgrt5m', 'LON23PrdApp01-troundgrt5m', 'LVL01PrdApp05-troundgrt5m', 'SG2PrdApp35-troundgrt5m', 'SYD21PrdApp07-troundgrt5m', 'YTO21PrdApp05-troundgrt5m'], '_wandb': {}}
+2026-03-27 16:37:07,239 INFO    MainThread:987930 [wandb_init.py:init():892] starting backend
+2026-03-27 16:37:07,942 INFO    MainThread:987930 [wandb_init.py:init():895] sending inform_init request
+2026-03-27 16:37:07,952 INFO    MainThread:987930 [wandb_init.py:init():903] backend started and connected
+2026-03-27 16:37:08,020 INFO    MainThread:987930 [wandb_init.py:init():973] updated telemetry
+2026-03-27 16:37:08,064 INFO    MainThread:987930 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-03-27 16:37:08,704 INFO    MainThread:987930 [wandb_init.py:init():1042] starting run threads in backend
+2026-03-27 16:37:09,303 INFO    MainThread:987930 [wandb_run.py:_console_start():2524] atexit reg
+2026-03-27 16:37:09,304 INFO    MainThread:987930 [wandb_run.py:_redirect():2373] redirect: wrap_raw
+2026-03-27 16:37:09,304 INFO    MainThread:987930 [wandb_run.py:_redirect():2442] Wrapping output streams.
+2026-03-27 16:37:09,304 INFO    MainThread:987930 [wandb_run.py:_redirect():2465] Redirects installed.
+2026-03-27 16:37:09,317 INFO    MainThread:987930 [wandb_init.py:init():1082] run started, returning control to user process

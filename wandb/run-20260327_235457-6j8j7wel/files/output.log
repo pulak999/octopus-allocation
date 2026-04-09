@@ -1,0 +1,6 @@
+[23:55:01] W&B run: https://wandb.ai/pm3371-columbia-university/cxl-memory-pooling/runs/6j8j7wel
+[23:55:01] Config saved → output/checkpoints/aug_all_traces/config.json
+[23:55:01] Loading training trace: AMS20PrdApp19-tround.sqlite …
+[23:55:32] Topology: 96 hosts, 192 MPDs, max_degree=8
+[23:55:32] Augmentation: scale=[0.7, 1.2] noise_sigma=0.0 jitter=0 lifetime=0.0 link_fail=0.0 multi_trace=True
+[23:55:32]   Loading 10 traces into pool (parallel) …

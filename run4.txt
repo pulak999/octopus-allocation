@@ -1,0 +1,2172 @@
+[00:28:26] Config saved → output/checkpoints/aug_v3_rewardA/config.json
+[00:28:26] Loading training trace: AMS20PrdApp19-tround.sqlite …
+[00:28:56] Topology: 96 hosts, 192 MPDs, max_degree=8
+[00:28:56] Augmentation: scale=[0.7, 1.2] noise_sigma=0.0 jitter=0 lifetime=0.0 link_fail=0.0 multi_trace=True
+[00:28:56]   Loading 10 traces into pool …
+[00:28:56]     loading AMS20PrdApp19-tround.sqlite …
+[00:29:24]     loading BLAPrdApp19-troundgrt5m.sqlite …
+[00:30:43]     loading BN9PrdApp18-troundgrt5m.sqlite …
+[00:31:41]     loading DSM08PrdApp05-troundgrt5m.sqlite …
+[00:32:37]     loading DUB24PrdApp09-troundgrt5m.sqlite …
+[00:33:35]     loading LON23PrdApp01-troundgrt5m.sqlite …
+[00:33:41]     loading LVL01PrdApp05-troundgrt5m.sqlite …
+[00:34:34]     loading SG2PrdApp35-troundgrt5m.sqlite …
+[00:35:43]     loading SYD21PrdApp07-troundgrt5m.sqlite …
+[00:36:19]     loading YTO21PrdApp05-troundgrt5m.sqlite …
+[00:36:55]   Loaded 10 traces into pool
+[00:36:55] Reward variant: A — mhd_to_hosts/Q_j precomputed
+[00:39:13] SubprocVecEnv: 32 parallel environments
+[00:39:13] Loading eval trace: LON23PrdApp01-troundgrt5m.sqlite …
+Using cuda device
+[00:39:27] Training SAC [aug_v3_rewardA] for 2,000,000 timesteps …
+Logging to output/logs/aug_v3_rewardA/SAC_1
+/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py:418: UserWarning: Training and eval env are not of the same type<stable_baselines3.common.vec_env.subproc_vec_env.SubprocVecEnv object at 0x7f3bacbbebf0> != <stable_baselines3.common.vec_env.dummy_vec_env.DummyVecEnv object at 0x7f39b8425660>
+  warnings.warn("Training and eval env are not of the same type" f"{self.training_env} != {self.eval_env}")
+/home/pm3371/gitrepos/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/evaluation.py:70: UserWarning: Evaluation environment is not wrapped with a ``Monitor`` wrapper. This may result in reporting modified episode lengths and rewards, if other wrappers happen to modify these. Consider wrapping environment first with ``Monitor`` wrapper.
+  warnings.warn(
+Eval num_timesteps=100000, episode_reward=-25.09 +/- 0.56
+Episode length: 7334.67 +/- 423.81
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.54e+05 |
+|    pooling_ratio    | 1.03     |
+|    pooling_savings  | -0.0342  |
+| eval/               |          |
+|    mean_ep_length   | 7.33e+03 |
+|    mean_reward      | -25.1    |
+| sac/                |          |
+|    actor_grad_norm  | 0.322    |
+|    critic_grad_norm | 13.8     |
+|    q1_mean          | 10.2     |
+|    q1_std           | 0.121    |
+|    q2_mean          | 10.2     |
+|    q_spread         | 0.0437   |
+| time/               |          |
+|    total_timesteps  | 100000   |
+| train/              |          |
+|    actor_loss       | -15.3    |
+|    critic_loss      | 0.11     |
+|    ent_coef         | 0.891    |
+|    ent_coef_loss    | -1.56    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 387      |
+----------------------------------
+New best mean reward!
+[00:47:02]   [PoolingSavings @ 100000] mean=0.0137  std=0.0185
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 2.54e+05 |
+|    pooling_ratio        | 1.27     |
+|    pooling_savings      | -0.265   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0137   |
+|    pooling_savings_std  | 0.0185   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.441    |
+|    critic_grad_norm     | 14.7     |
+|    q1_mean              | 11       |
+|    q1_std               | 0.105    |
+|    q2_mean              | 11       |
+|    q_spread             | 0.0408   |
+| time/                   |          |
+|    episodes             | 4        |
+|    fps                  | 235      |
+|    time_elapsed         | 465      |
+|    total_timesteps      | 109824   |
+| train/                  |          |
+|    actor_loss           | -16      |
+|    critic_loss          | 0.0986   |
+|    ent_coef             | 0.881    |
+|    ent_coef_loss        | -1.72    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 425      |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.09e+05 |
+|    pooling_ratio    | 1.03     |
+|    pooling_savings  | -0.031   |
+| sac/                |          |
+|    actor_grad_norm  | 0.465    |
+|    critic_grad_norm | 21.7     |
+|    q1_mean          | 16       |
+|    q1_std           | 0.0813   |
+|    q2_mean          | 16.1     |
+|    q_spread         | 0.0298   |
+| time/               |          |
+|    episodes         | 8        |
+|    fps              | 333      |
+|    time_elapsed     | 543      |
+|    total_timesteps  | 181632   |
+| train/              |          |
+|    actor_loss       | -20.5    |
+|    critic_loss      | 0.0723   |
+|    ent_coef         | 0.809    |
+|    ent_coef_loss    | -2.85    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 706      |
+----------------------------------
+Eval num_timesteps=200000, episode_reward=-27.04 +/- 0.58
+Episode length: 7991.67 +/- 320.08
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.42e+05 |
+|    pooling_ratio    | 1.43     |
+|    pooling_savings  | -0.429   |
+| eval/               |          |
+|    mean_ep_length   | 7.99e+03 |
+|    mean_reward      | -27      |
+| sac/                |          |
+|    actor_grad_norm  | 0.406    |
+|    critic_grad_norm | 20.1     |
+|    q1_mean          | 17.2     |
+|    q1_std           | 0.0847   |
+|    q2_mean          | 17.2     |
+|    q_spread         | 0.0268   |
+| time/               |          |
+|    total_timesteps  | 200000   |
+| train/              |          |
+|    actor_loss       | -21.8    |
+|    critic_loss      | 0.0693   |
+|    ent_coef         | 0.792    |
+|    ent_coef_loss    | -3.14    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 778      |
+----------------------------------
+[00:55:13]   [PoolingSavings @ 200000] mean=0.0105  std=0.0143
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.42e+05 |
+|    pooling_ratio        | 1.17     |
+|    pooling_savings      | -0.167   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0105   |
+|    pooling_savings_std  | 0.0143   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.273    |
+|    critic_grad_norm     | 21.5     |
+|    q1_mean              | 18       |
+|    q1_std               | 0.0846   |
+|    q2_mean              | 18       |
+|    q_spread             | 0.0253   |
+| time/                   |          |
+|    episodes             | 12       |
+|    fps                  | 218      |
+|    time_elapsed         | 954      |
+|    total_timesteps      | 208960   |
+| train/                  |          |
+|    actor_loss           | -22.3    |
+|    critic_loss          | 0.0676   |
+|    ent_coef             | 0.784    |
+|    ent_coef_loss        | -3.28    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 813      |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.76e+05 |
+|    pooling_ratio    | 1.21     |
+|    pooling_savings  | -0.207   |
+| sac/                |          |
+|    actor_grad_norm  | 0.297    |
+|    critic_grad_norm | 25.4     |
+|    q1_mean          | 19.3     |
+|    q1_std           | 0.0861   |
+|    q2_mean          | 19.3     |
+|    q_spread         | 0.0224   |
+| time/               |          |
+|    episodes         | 16       |
+|    fps              | 233      |
+|    time_elapsed     | 982      |
+|    total_timesteps  | 229120   |
+| train/              |          |
+|    actor_loss       | -23.6    |
+|    critic_loss      | 0.075    |
+|    ent_coef         | 0.766    |
+|    ent_coef_loss    | -3.59    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 891      |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.8e+05  |
+|    pooling_ratio    | 1.2      |
+|    pooling_savings  | -0.204   |
+| sac/                |          |
+|    actor_grad_norm  | 0.326    |
+|    critic_grad_norm | 22.6     |
+|    q1_mean          | 19.9     |
+|    q1_std           | 0.0913   |
+|    q2_mean          | 19.9     |
+|    q_spread         | 0.0249   |
+| time/               |          |
+|    episodes         | 20       |
+|    fps              | 240      |
+|    time_elapsed     | 993      |
+|    total_timesteps  | 238976   |
+| train/              |          |
+|    actor_loss       | -24.3    |
+|    critic_loss      | 0.0514   |
+|    ent_coef         | 0.757    |
+|    ent_coef_loss    | -3.75    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 930      |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.84e+05 |
+|    pooling_ratio    | 1.38     |
+|    pooling_savings  | -0.377   |
+| sac/                |          |
+|    actor_grad_norm  | 0.34     |
+|    critic_grad_norm | 31       |
+|    q1_mean          | 22.8     |
+|    q1_std           | 0.0991   |
+|    q2_mean          | 22.8     |
+|    q_spread         | 0.0209   |
+| time/               |          |
+|    episodes         | 24       |
+|    fps              | 270      |
+|    time_elapsed     | 1038     |
+|    total_timesteps  | 280832   |
+| train/              |          |
+|    actor_loss       | -26.9    |
+|    critic_loss      | 0.0787   |
+|    ent_coef         | 0.721    |
+|    ent_coef_loss    | -4.41    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1093     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.84e+05 |
+|    pooling_ratio    | 1.35     |
+|    pooling_savings  | -0.347   |
+| sac/                |          |
+|    actor_grad_norm  | 0.22     |
+|    critic_grad_norm | 24.8     |
+|    q1_mean          | 23.4     |
+|    q1_std           | 0.0946   |
+|    q2_mean          | 23.4     |
+|    q_spread         | 0.0198   |
+| time/               |          |
+|    episodes         | 28       |
+|    fps              | 275      |
+|    time_elapsed     | 1050     |
+|    total_timesteps  | 289568   |
+| train/              |          |
+|    actor_loss       | -27.4    |
+|    critic_loss      | 0.0627   |
+|    ent_coef         | 0.713    |
+|    ent_coef_loss    | -4.55    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1128     |
+----------------------------------
+Eval num_timesteps=300000, episode_reward=-23.39 +/- 1.56
+Episode length: 6857.33 +/- 479.83
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.84e+05 |
+| eval/               |          |
+|    mean_ep_length   | 6.86e+03 |
+|    mean_reward      | -23.4    |
+| sac/                |          |
+|    actor_grad_norm  | 0.23     |
+|    critic_grad_norm | 31.2     |
+|    q1_mean          | 24       |
+|    q1_std           | 0.0882   |
+|    q2_mean          | 24       |
+|    q_spread         | 0.017    |
+| time/               |          |
+|    total_timesteps  | 300000   |
+| train/              |          |
+|    actor_loss       | -28.2    |
+|    critic_loss      | 0.0739   |
+|    ent_coef         | 0.705    |
+|    ent_coef_loss    | -4.72    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1168     |
+----------------------------------
+New best mean reward!
+[01:03:09]   [PoolingSavings @ 300000] mean=0.0138  std=0.0098
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.9e+05  |
+|    pooling_ratio        | 1.32     |
+|    pooling_savings      | -0.319   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0138   |
+|    pooling_savings_std  | 0.00984  |
+| sac/                    |          |
+|    actor_grad_norm      | 0.319    |
+|    critic_grad_norm     | 28.2     |
+|    q1_mean              | 25.8     |
+|    q1_std               | 0.089    |
+|    q2_mean              | 25.8     |
+|    q_spread             | 0.0171   |
+| time/                   |          |
+|    episodes             | 32       |
+|    fps                  | 225      |
+|    time_elapsed         | 1451     |
+|    total_timesteps      | 327296   |
+| train/                  |          |
+|    actor_loss           | -29.8    |
+|    critic_loss          | 0.073    |
+|    ent_coef             | 0.682    |
+|    ent_coef_loss        | -5.15    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 1275     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.9e+05  |
+|    pooling_ratio    | 1.24     |
+|    pooling_savings  | -0.24    |
+| sac/                |          |
+|    actor_grad_norm  | 0.224    |
+|    critic_grad_norm | 31.2     |
+|    q1_mean          | 27.7     |
+|    q1_std           | 0.0964   |
+|    q2_mean          | 27.7     |
+|    q_spread         | 0.019    |
+| time/               |          |
+|    episodes         | 36       |
+|    fps              | 240      |
+|    time_elapsed     | 1482     |
+|    total_timesteps  | 356448   |
+| train/              |          |
+|    actor_loss       | -31.4    |
+|    critic_loss      | 0.0513   |
+|    ent_coef         | 0.659    |
+|    ent_coef_loss    | -5.62    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1389     |
+----------------------------------
+Eval num_timesteps=400000, episode_reward=-26.52 +/- 3.13
+Episode length: 7720.00 +/- 800.73
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.9e+05  |
+|    pooling_ratio    | 1.22     |
+|    pooling_savings  | -0.218   |
+| eval/               |          |
+|    mean_ep_length   | 7.72e+03 |
+|    mean_reward      | -26.5    |
+| sac/                |          |
+|    actor_grad_norm  | 0.274    |
+|    critic_grad_norm | 27.4     |
+|    q1_mean          | 30.3     |
+|    q1_std           | 0.0965   |
+|    q2_mean          | 30.3     |
+|    q_spread         | 0.0129   |
+| time/               |          |
+|    total_timesteps  | 400000   |
+| train/              |          |
+|    actor_loss       | -33.9    |
+|    critic_loss      | 0.04     |
+|    ent_coef         | 0.627    |
+|    ent_coef_loss    | -6.31    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1559     |
+----------------------------------
+[01:11:13]   [PoolingSavings @ 400000] mean=0.0168  std=0.0126
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.9e+05  |
+|    pooling_ratio        | 1.23     |
+|    pooling_savings      | -0.233   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0168   |
+|    pooling_savings_std  | 0.0126   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.241    |
+|    critic_grad_norm     | 30.6     |
+|    q1_mean              | 30.5     |
+|    q1_std               | 0.0847   |
+|    q2_mean              | 30.5     |
+|    q_spread             | 0.0131   |
+| time/                   |          |
+|    episodes             | 40       |
+|    fps                  | 210      |
+|    time_elapsed         | 1906     |
+|    total_timesteps      | 400576   |
+| train/                  |          |
+|    actor_loss           | -33.9    |
+|    critic_loss          | 0.0365   |
+|    ent_coef             | 0.626    |
+|    ent_coef_loss        | -6.29    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 1561     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.9e+05  |
+|    pooling_ratio    | 1.16     |
+|    pooling_savings  | -0.16    |
+| sac/                |          |
+|    actor_grad_norm  | 0.312    |
+|    critic_grad_norm | 35.8     |
+|    q1_mean          | 32.1     |
+|    q1_std           | 0.0887   |
+|    q2_mean          | 32.1     |
+|    q_spread         | 0.0126   |
+| time/               |          |
+|    episodes         | 44       |
+|    fps              | 222      |
+|    time_elapsed     | 1940     |
+|    total_timesteps  | 431040   |
+| train/              |          |
+|    actor_loss       | -35.6    |
+|    critic_loss      | 0.0626   |
+|    ent_coef         | 0.604    |
+|    ent_coef_loss    | -6.76    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1680     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.84e+05 |
+|    pooling_ratio    | 1.09     |
+|    pooling_savings  | -0.0897  |
+| sac/                |          |
+|    actor_grad_norm  | 0.226    |
+|    critic_grad_norm | 34.4     |
+|    q1_mean          | 32.6     |
+|    q1_std           | 0.0902   |
+|    q2_mean          | 32.6     |
+|    q_spread         | 0.0148   |
+| time/               |          |
+|    episodes         | 48       |
+|    fps              | 224      |
+|    time_elapsed     | 1947     |
+|    total_timesteps  | 436480   |
+| train/              |          |
+|    actor_loss       | -35.8    |
+|    critic_loss      | 0.0369   |
+|    ent_coef         | 0.6      |
+|    ent_coef_loss    | -6.87    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1701     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.3e+05  |
+|    pooling_ratio    | 1.15     |
+|    pooling_savings  | -0.152   |
+| sac/                |          |
+|    actor_grad_norm  | 0.172    |
+|    critic_grad_norm | 40.1     |
+|    q1_mean          | 34.6     |
+|    q1_std           | 0.0906   |
+|    q2_mean          | 34.6     |
+|    q_spread         | 0.014    |
+| time/               |          |
+|    episodes         | 52       |
+|    fps              | 238      |
+|    time_elapsed     | 1987     |
+|    total_timesteps  | 474848   |
+| train/              |          |
+|    actor_loss       | -37.9    |
+|    critic_loss      | 0.0396   |
+|    ent_coef         | 0.574    |
+|    ent_coef_loss    | -7.48    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1851     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.6e+05  |
+|    pooling_ratio    | 0.942    |
+|    pooling_savings  | 0.0581   |
+| sac/                |          |
+|    actor_grad_norm  | 0.258    |
+|    critic_grad_norm | 55.5     |
+|    q1_mean          | 35.3     |
+|    q1_std           | 0.0912   |
+|    q2_mean          | 35.2     |
+|    q_spread         | 0.0256   |
+| time/               |          |
+|    episodes         | 56       |
+|    fps              | 242      |
+|    time_elapsed     | 1999     |
+|    total_timesteps  | 485216   |
+| train/              |          |
+|    actor_loss       | -38.4    |
+|    critic_loss      | 0.0473   |
+|    ent_coef         | 0.567    |
+|    ent_coef_loss    | -7.65    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1892     |
+----------------------------------
+Eval num_timesteps=500000, episode_reward=-23.19 +/- 2.03
+Episode length: 6997.33 +/- 715.23
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.6e+05  |
+|    pooling_ratio    | 0.959    |
+|    pooling_savings  | 0.0414   |
+| eval/               |          |
+|    mean_ep_length   | 7e+03    |
+|    mean_reward      | -23.2    |
+| sac/                |          |
+|    actor_grad_norm  | 0.206    |
+|    critic_grad_norm | 38.5     |
+|    q1_mean          | 35.9     |
+|    q1_std           | 0.0913   |
+|    q2_mean          | 35.9     |
+|    q_spread         | 0.0104   |
+| time/               |          |
+|    total_timesteps  | 500000   |
+| train/              |          |
+|    actor_loss       | -39      |
+|    critic_loss      | 0.0328   |
+|    ent_coef         | 0.557    |
+|    ent_coef_loss    | -7.87    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 1950     |
+----------------------------------
+New best mean reward!
+[01:19:03]   [PoolingSavings @ 500000] mean=0.0136  std=0.0095
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 3.6e+05  |
+|    pooling_ratio        | 1.14     |
+|    pooling_savings      | -0.139   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0136   |
+|    pooling_savings_std  | 0.00953  |
+| sac/                    |          |
+|    actor_grad_norm      | 0.287    |
+|    critic_grad_norm     | 27.1     |
+|    q1_mean              | 36.6     |
+|    q1_std               | 0.11     |
+|    q2_mean              | 36.6     |
+|    q_spread             | 0.0131   |
+| time/                   |          |
+|    episodes             | 60       |
+|    fps                  | 212      |
+|    time_elapsed         | 2381     |
+|    total_timesteps      | 504992   |
+| train/                  |          |
+|    actor_loss           | -39.3    |
+|    critic_loss          | 0.107    |
+|    ent_coef             | 0.554    |
+|    ent_coef_loss        | -7.95    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 1969     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.6e+05  |
+|    pooling_ratio    | 0.983    |
+|    pooling_savings  | 0.0166   |
+| sac/                |          |
+|    actor_grad_norm  | 0.204    |
+|    critic_grad_norm | 41.8     |
+|    q1_mean          | 39.2     |
+|    q1_std           | 0.0934   |
+|    q2_mean          | 39.2     |
+|    q_spread         | 0.0105   |
+| time/               |          |
+|    episodes         | 64       |
+|    fps              | 230      |
+|    time_elapsed     | 2441     |
+|    total_timesteps  | 562624   |
+| train/              |          |
+|    actor_loss       | -42.2    |
+|    critic_loss      | 0.03     |
+|    ent_coef         | 0.518    |
+|    ent_coef_loss    | -8.88    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2194     |
+----------------------------------
+Eval num_timesteps=600000, episode_reward=-25.22 +/- 2.62
+Episode length: 7382.67 +/- 761.38
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.67e+05 |
+|    pooling_ratio    | 0.971    |
+|    pooling_savings  | 0.029    |
+| eval/               |          |
+|    mean_ep_length   | 7.38e+03 |
+|    mean_reward      | -25.2    |
+| sac/                |          |
+|    actor_grad_norm  | 0.203    |
+|    critic_grad_norm | 39.7     |
+|    q1_mean          | 41       |
+|    q1_std           | 0.0881   |
+|    q2_mean          | 41       |
+|    q_spread         | 0.00911  |
+| time/               |          |
+|    total_timesteps  | 600000   |
+| train/              |          |
+|    actor_loss       | -43.9    |
+|    critic_loss      | 0.0329   |
+|    ent_coef         | 0.496    |
+|    ent_coef_loss    | -9.45    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2340     |
+----------------------------------
+[01:26:54]   [PoolingSavings @ 600000] mean=0.0134  std=0.0096
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 3.67e+05 |
+|    pooling_ratio        | 1.31     |
+|    pooling_savings      | -0.306   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0134   |
+|    pooling_savings_std  | 0.00957  |
+| sac/                    |          |
+|    actor_grad_norm      | 0.208    |
+|    critic_grad_norm     | 30.9     |
+|    q1_mean              | 42.3     |
+|    q1_std               | 0.0993   |
+|    q2_mean              | 42.3     |
+|    q_spread             | 0.00813  |
+| time/                   |          |
+|    episodes             | 68       |
+|    fps                  | 217      |
+|    time_elapsed         | 2873     |
+|    total_timesteps      | 624544   |
+| train/                  |          |
+|    actor_loss           | -44.9    |
+|    critic_loss          | 0.0278   |
+|    ent_coef             | 0.482    |
+|    ent_coef_loss        | -9.85    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 2436     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.67e+05 |
+|    pooling_ratio    | 1.25     |
+|    pooling_savings  | -0.246   |
+| sac/                |          |
+|    actor_grad_norm  | 0.23     |
+|    critic_grad_norm | 45.9     |
+|    q1_mean          | 43       |
+|    q1_std           | 0.101    |
+|    q2_mean          | 43       |
+|    q_spread         | 0.011    |
+| time/               |          |
+|    episodes         | 72       |
+|    fps              | 222      |
+|    time_elapsed     | 2893     |
+|    total_timesteps  | 642816   |
+| train/              |          |
+|    actor_loss       | -45.7    |
+|    critic_loss      | 0.0229   |
+|    ent_coef         | 0.471    |
+|    ent_coef_loss    | -10.1    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2507     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 3.67e+05 |
+|    pooling_ratio    | 1.45     |
+|    pooling_savings  | -0.452   |
+| sac/                |          |
+|    actor_grad_norm  | 0.185    |
+|    critic_grad_norm | 40.2     |
+|    q1_mean          | 44.4     |
+|    q1_std           | 0.0875   |
+|    q2_mean          | 44.4     |
+|    q_spread         | 0.00958  |
+| time/               |          |
+|    episodes         | 76       |
+|    fps              | 229      |
+|    time_elapsed     | 2923     |
+|    total_timesteps  | 672128   |
+| train/              |          |
+|    actor_loss       | -46.8    |
+|    critic_loss      | 0.0343   |
+|    ent_coef         | 0.455    |
+|    ent_coef_loss    | -10.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2622     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.18e+05 |
+|    pooling_ratio    | 1.24     |
+|    pooling_savings  | -0.244   |
+| sac/                |          |
+|    actor_grad_norm  | 0.141    |
+|    critic_grad_norm | 38.7     |
+|    q1_mean          | 44.6     |
+|    q1_std           | 0.0983   |
+|    q2_mean          | 44.6     |
+|    q_spread         | 0.00799  |
+| time/               |          |
+|    episodes         | 80       |
+|    fps              | 231      |
+|    time_elapsed     | 2930     |
+|    total_timesteps  | 677312   |
+| train/              |          |
+|    actor_loss       | -47.2    |
+|    critic_loss      | 0.0197   |
+|    ent_coef         | 0.453    |
+|    ent_coef_loss    | -10.7    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2642     |
+----------------------------------
+Eval num_timesteps=700000, episode_reward=-24.71 +/- 0.76
+Episode length: 7188.67 +/- 84.57
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.73e+05 |
+|    pooling_ratio    | 1.34     |
+|    pooling_savings  | -0.336   |
+| eval/               |          |
+|    mean_ep_length   | 7.19e+03 |
+|    mean_reward      | -24.7    |
+| sac/                |          |
+|    actor_grad_norm  | 0.193    |
+|    critic_grad_norm | 56.1     |
+|    q1_mean          | 45.5     |
+|    q1_std           | 0.101    |
+|    q2_mean          | 45.4     |
+|    q_spread         | 0.0078   |
+| time/               |          |
+|    total_timesteps  | 700000   |
+| train/              |          |
+|    actor_loss       | -48.1    |
+|    critic_loss      | 0.0239   |
+|    ent_coef         | 0.441    |
+|    ent_coef_loss    | -11      |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2731     |
+----------------------------------
+[01:34:49]   [PoolingSavings @ 700000] mean=0.0122  std=0.0132
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.73e+05 |
+|    pooling_ratio        | 1.07     |
+|    pooling_savings      | -0.0669  |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0122   |
+|    pooling_savings_std  | 0.0132   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.15     |
+|    critic_grad_norm     | 46       |
+|    q1_mean              | 45.8     |
+|    q1_std               | 0.0995   |
+|    q2_mean              | 45.8     |
+|    q_spread             | 0.00877  |
+| time/                   |          |
+|    episodes             | 84       |
+|    fps                  | 212      |
+|    time_elapsed         | 3327     |
+|    total_timesteps      | 706048   |
+| train/                  |          |
+|    actor_loss           | -48.3    |
+|    critic_loss          | 0.0282   |
+|    ent_coef             | 0.438    |
+|    ent_coef_loss        | -11.1    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 2754     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.88e+05 |
+|    pooling_ratio    | 1.08     |
+|    pooling_savings  | -0.0807  |
+| sac/                |          |
+|    actor_grad_norm  | 0.163    |
+|    critic_grad_norm | 46.2     |
+|    q1_mean          | 47.5     |
+|    q1_std           | 0.0881   |
+|    q2_mean          | 47.5     |
+|    q_spread         | 0.00778  |
+| time/               |          |
+|    episodes         | 88       |
+|    fps              | 221      |
+|    time_elapsed     | 3369     |
+|    total_timesteps  | 746496   |
+| train/              |          |
+|    actor_loss       | -49.9    |
+|    critic_loss      | 0.0159   |
+|    ent_coef         | 0.418    |
+|    ent_coef_loss    | -11.8    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 2912     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.89e+05 |
+|    pooling_ratio    | 0.984    |
+|    pooling_savings  | 0.0163   |
+| sac/                |          |
+|    actor_grad_norm  | 0.226    |
+|    critic_grad_norm | 58.3     |
+|    q1_mean          | 49.6     |
+|    q1_std           | 0.136    |
+|    q2_mean          | 49.6     |
+|    q_spread         | 0.00851  |
+| time/               |          |
+|    episodes         | 92       |
+|    fps              | 233      |
+|    time_elapsed     | 3422     |
+|    total_timesteps  | 798208   |
+| train/              |          |
+|    actor_loss       | -51.8    |
+|    critic_loss      | 0.0303   |
+|    ent_coef         | 0.393    |
+|    ent_coef_loss    | -12.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3114     |
+----------------------------------
+Eval num_timesteps=800000, episode_reward=-24.37 +/- 1.35
+Episode length: 7193.00 +/- 214.95
+---------------------------------
+| env/               |          |
+|    max_peak        | 1.89e+05 |
+|    pooling_ratio   | 1.12     |
+|    pooling_savings | -0.122   |
+| eval/              |          |
+|    mean_ep_length  | 7.19e+03 |
+|    mean_reward     | -24.4    |
+| time/              |          |
+|    total_timesteps | 800000   |
+| train/             |          |
+|    actor_loss      | -51.9    |
+|    critic_loss     | 0.0282   |
+|    ent_coef        | 0.392    |
+|    ent_coef_loss   | -12.6    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 3121     |
+---------------------------------
+[01:42:41]   [PoolingSavings @ 800000] mean=0.0093  std=0.0209
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.89e+05 |
+|    pooling_ratio        | 1.19     |
+|    pooling_savings      | -0.188   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.00933  |
+|    pooling_savings_std  | 0.0209   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.22     |
+|    critic_grad_norm     | 40.9     |
+|    q1_mean              | 50       |
+|    q1_std               | 0.127    |
+|    q2_mean              | 50       |
+|    q_spread             | 0.00703  |
+| time/                   |          |
+|    episodes             | 96       |
+|    fps                  | 212      |
+|    time_elapsed         | 3802     |
+|    total_timesteps      | 807232   |
+| train/                  |          |
+|    actor_loss           | -52      |
+|    critic_loss          | 0.0307   |
+|    ent_coef             | 0.389    |
+|    ent_coef_loss        | -12.7    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 3150     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.9e+05  |
+|    pooling_ratio    | 1.18     |
+|    pooling_savings  | -0.181   |
+| sac/                |          |
+|    actor_grad_norm  | 0.143    |
+|    critic_grad_norm | 52.9     |
+|    q1_mean          | 51.3     |
+|    q1_std           | 0.0919   |
+|    q2_mean          | 51.3     |
+|    q_spread         | 0.00782  |
+| time/               |          |
+|    episodes         | 100      |
+|    fps              | 219      |
+|    time_elapsed     | 3840     |
+|    total_timesteps  | 844288   |
+| train/              |          |
+|    actor_loss       | -53.3    |
+|    critic_loss      | 0.0133   |
+|    ent_coef         | 0.372    |
+|    ent_coef_loss    | -13.3    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3294     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.93e+05 |
+|    pooling_ratio    | 1.31     |
+|    pooling_savings  | -0.312   |
+| sac/                |          |
+|    actor_grad_norm  | 0.165    |
+|    critic_grad_norm | 45.5     |
+|    q1_mean          | 51.9     |
+|    q1_std           | 0.0996   |
+|    q2_mean          | 51.9     |
+|    q_spread         | 0.00755  |
+| time/               |          |
+|    episodes         | 104      |
+|    fps              | 223      |
+|    time_elapsed     | 3856     |
+|    total_timesteps  | 860704   |
+| train/              |          |
+|    actor_loss       | -53.9    |
+|    critic_loss      | 0.0155   |
+|    ent_coef         | 0.365    |
+|    ent_coef_loss    | -13.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3359     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.93e+05 |
+|    pooling_ratio    | 1.53     |
+|    pooling_savings  | -0.535   |
+| sac/                |          |
+|    actor_grad_norm  | 0.187    |
+|    critic_grad_norm | 43.3     |
+|    q1_mean          | 52.9     |
+|    q1_std           | 0.105    |
+|    q2_mean          | 52.9     |
+|    q_spread         | 0.00781  |
+| time/               |          |
+|    episodes         | 108      |
+|    fps              | 228      |
+|    time_elapsed     | 3884     |
+|    total_timesteps  | 888352   |
+| train/              |          |
+|    actor_loss       | -54.5    |
+|    critic_loss      | 0.0462   |
+|    ent_coef         | 0.353    |
+|    ent_coef_loss    | -14      |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3467     |
+----------------------------------
+Eval num_timesteps=900000, episode_reward=-25.99 +/- 1.69
+Episode length: 7847.67 +/- 720.19
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.93e+05 |
+| eval/               |          |
+|    mean_ep_length   | 7.85e+03 |
+|    mean_reward      | -26      |
+| sac/                |          |
+|    actor_grad_norm  | 0.133    |
+|    critic_grad_norm | 52.5     |
+|    q1_mean          | 53       |
+|    q1_std           | 0.0976   |
+|    q2_mean          | 53       |
+|    q_spread         | 0.00742  |
+| time/               |          |
+|    total_timesteps  | 900000   |
+| train/              |          |
+|    actor_loss       | -55.1    |
+|    critic_loss      | 0.0168   |
+|    ent_coef         | 0.349    |
+|    ent_coef_loss    | -14.2    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3512     |
+----------------------------------
+[01:50:39]   [PoolingSavings @ 900000] mean=0.0121  std=0.0122
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.93e+05 |
+|    pooling_ratio        | 1.06     |
+|    pooling_savings      | -0.0601  |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0121   |
+|    pooling_savings_std  | 0.0122   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.146    |
+|    critic_grad_norm     | 51.6     |
+|    q1_mean              | 54.1     |
+|    q1_std               | 0.0871   |
+|    q2_mean              | 54.1     |
+|    q_spread             | 0.00637  |
+| time/                   |          |
+|    episodes             | 112      |
+|    fps                  | 216      |
+|    time_elapsed         | 4307     |
+|    total_timesteps      | 932512   |
+| train/                  |          |
+|    actor_loss           | -56.2    |
+|    critic_loss          | 0.0273   |
+|    ent_coef             | 0.336    |
+|    ent_coef_loss        | -14.7    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 3639     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.32e+05 |
+|    pooling_ratio    | 1.22     |
+|    pooling_savings  | -0.215   |
+| sac/                |          |
+|    actor_grad_norm  | 0.151    |
+|    critic_grad_norm | 66.7     |
+|    q1_mean          | 54.8     |
+|    q1_std           | 0.099    |
+|    q2_mean          | 54.8     |
+|    q_spread         | 0.00704  |
+| time/               |          |
+|    episodes         | 116      |
+|    fps              | 220      |
+|    time_elapsed     | 4332     |
+|    total_timesteps  | 955264   |
+| train/              |          |
+|    actor_loss       | -56.9    |
+|    critic_loss      | 0.015    |
+|    ent_coef         | 0.327    |
+|    ent_coef_loss    | -15.1    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3728     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.33e+05 |
+|    pooling_ratio    | 0.85     |
+|    pooling_savings  | 0.15     |
+| sac/                |          |
+|    actor_grad_norm  | 0.282    |
+|    critic_grad_norm | 63.9     |
+|    q1_mean          | 56.3     |
+|    q1_std           | 0.186    |
+|    q2_mean          | 56.3     |
+|    q_spread         | 0.00611  |
+| time/               |          |
+|    episodes         | 120      |
+|    fps              | 226      |
+|    time_elapsed     | 4373     |
+|    total_timesteps  | 992416   |
+| train/              |          |
+|    actor_loss       | -57.9    |
+|    critic_loss      | 0.13     |
+|    ent_coef         | 0.313    |
+|    ent_coef_loss    | -15.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3873     |
+----------------------------------
+Eval num_timesteps=1000000, episode_reward=-26.89 +/- 1.74
+Episode length: 7876.00 +/- 620.65
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.33e+05 |
+| eval/               |          |
+|    mean_ep_length   | 7.88e+03 |
+|    mean_reward      | -26.9    |
+| sac/                |          |
+|    actor_grad_norm  | 0.121    |
+|    critic_grad_norm | 65.2     |
+|    q1_mean          | 56.2     |
+|    q1_std           | 0.105    |
+|    q2_mean          | 56.2     |
+|    q_spread         | 0.00587  |
+| time/               |          |
+|    total_timesteps  | 1000000  |
+| train/              |          |
+|    actor_loss       | -58      |
+|    critic_loss      | 0.00902  |
+|    ent_coef         | 0.31     |
+|    ent_coef_loss    | -15.8    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 3903     |
+----------------------------------
+[01:58:50]   [PoolingSavings @ 1000000] mean=0.0106  std=0.0087
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 2.36e+05 |
+|    pooling_ratio        | 1.28     |
+|    pooling_savings      | -0.281   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0106   |
+|    pooling_savings_std  | 0.00866  |
+| sac/                    |          |
+|    actor_grad_norm      | 0.105    |
+|    critic_grad_norm     | 50       |
+|    q1_mean              | 57.1     |
+|    q1_std               | 0.0993   |
+|    q2_mean              | 57.1     |
+|    q_spread             | 0.00619  |
+| time/                   |          |
+|    episodes             | 124      |
+|    fps                  | 213      |
+|    time_elapsed         | 4788     |
+|    total_timesteps      | 1024480  |
+| train/                  |          |
+|    actor_loss           | -58.8    |
+|    critic_loss          | 0.0105   |
+|    ent_coef             | 0.301    |
+|    ent_coef_loss        | -16.2    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 3998     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.36e+05 |
+|    pooling_ratio    | 1.25     |
+|    pooling_savings  | -0.254   |
+| sac/                |          |
+|    actor_grad_norm  | 0.174    |
+|    critic_grad_norm | 39.3     |
+|    q1_mean          | 58.2     |
+|    q1_std           | 0.108    |
+|    q2_mean          | 58.2     |
+|    q_spread         | 0.00605  |
+| time/               |          |
+|    episodes         | 128      |
+|    fps              | 220      |
+|    time_elapsed     | 4830     |
+|    total_timesteps  | 1062720  |
+| train/              |          |
+|    actor_loss       | -60      |
+|    critic_loss      | 0.0547   |
+|    ent_coef         | 0.288    |
+|    ent_coef_loss    | -16.7    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4148     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.36e+05 |
+|    pooling_ratio    | 1.35     |
+|    pooling_savings  | -0.352   |
+| sac/                |          |
+|    actor_grad_norm  | 0.161    |
+|    critic_grad_norm | 33.2     |
+|    q1_mean          | 58.3     |
+|    q1_std           | 0.103    |
+|    q2_mean          | 58.3     |
+|    q_spread         | 0.00543  |
+| time/               |          |
+|    episodes         | 132      |
+|    fps              | 221      |
+|    time_elapsed     | 4842     |
+|    total_timesteps  | 1073056  |
+| train/              |          |
+|    actor_loss       | -60.1    |
+|    critic_loss      | 0.0403   |
+|    ent_coef         | 0.285    |
+|    ent_coef_loss    | -16.9    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4188     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.36e+05 |
+|    pooling_ratio    | 1.27     |
+|    pooling_savings  | -0.274   |
+| sac/                |          |
+|    actor_grad_norm  | 0.222    |
+|    critic_grad_norm | 26.8     |
+|    q1_mean          | 59.2     |
+|    q1_std           | 0.157    |
+|    q2_mean          | 59.2     |
+|    q_spread         | 0.00728  |
+| time/               |          |
+|    episodes         | 136      |
+|    fps              | 225      |
+|    time_elapsed     | 4864     |
+|    total_timesteps  | 1094944  |
+| train/              |          |
+|    actor_loss       | -60.7    |
+|    critic_loss      | 0.0217   |
+|    ent_coef         | 0.277    |
+|    ent_coef_loss    | -17.2    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4274     |
+----------------------------------
+Eval num_timesteps=1100000, episode_reward=-26.10 +/- 1.08
+Episode length: 7807.00 +/- 433.26
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.36e+05 |
+|    pooling_ratio    | 1.12     |
+|    pooling_savings  | -0.123   |
+| eval/               |          |
+|    mean_ep_length   | 7.81e+03 |
+|    mean_reward      | -26.1    |
+| sac/                |          |
+|    actor_grad_norm  | 0.159    |
+|    critic_grad_norm | 73.6     |
+|    q1_mean          | 59       |
+|    q1_std           | 0.11     |
+|    q2_mean          | 59       |
+|    q_spread         | 0.00783  |
+| time/               |          |
+|    total_timesteps  | 1100000  |
+| train/              |          |
+|    actor_loss       | -60.7    |
+|    critic_loss      | 0.0141   |
+|    ent_coef         | 0.276    |
+|    ent_coef_loss    | -17.3    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4293     |
+----------------------------------
+[02:07:07]   [PoolingSavings @ 1100000] mean=0.0148  std=0.0177
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.32e+05 |
+|    pooling_ratio        | 1.02     |
+|    pooling_savings      | -0.0242  |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0148   |
+|    pooling_savings_std  | 0.0177   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.103    |
+|    critic_grad_norm     | 59.5     |
+|    q1_mean              | 59.6     |
+|    q1_std               | 0.0856   |
+|    q2_mean              | 59.6     |
+|    q_spread             | 0.00615  |
+| time/                   |          |
+|    episodes             | 140      |
+|    fps                  | 212      |
+|    time_elapsed         | 5283     |
+|    total_timesteps      | 1122720  |
+| train/                  |          |
+|    actor_loss           | -61.2    |
+|    critic_loss          | 0.00908  |
+|    ent_coef             | 0.269    |
+|    ent_coef_loss        | -17.7    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 4382     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.39e+05 |
+|    pooling_ratio    | 1.14     |
+|    pooling_savings  | -0.138   |
+| sac/                |          |
+|    actor_grad_norm  | 0.0821   |
+|    critic_grad_norm | 50.7     |
+|    q1_mean          | 60.7     |
+|    q1_std           | 0.09     |
+|    q2_mean          | 60.7     |
+|    q_spread         | 0.00553  |
+| time/               |          |
+|    episodes         | 144      |
+|    fps              | 218      |
+|    time_elapsed     | 5324     |
+|    total_timesteps  | 1161408  |
+| train/              |          |
+|    actor_loss       | -62.1    |
+|    critic_loss      | 0.00725  |
+|    ent_coef         | 0.257    |
+|    ent_coef_loss    | -18.3    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4533     |
+----------------------------------
+Eval num_timesteps=1200000, episode_reward=-25.05 +/- 1.70
+Episode length: 7430.00 +/- 692.53
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.53e+05 |
+|    pooling_ratio    | 0.987    |
+|    pooling_savings  | 0.013    |
+| eval/               |          |
+|    mean_ep_length   | 7.43e+03 |
+|    mean_reward      | -25.1    |
+| sac/                |          |
+|    actor_grad_norm  | 0.134    |
+|    critic_grad_norm | 39.1     |
+|    q1_mean          | 61.7     |
+|    q1_std           | 0.139    |
+|    q2_mean          | 61.7     |
+|    q_spread         | 0.00652  |
+| time/               |          |
+|    total_timesteps  | 1200000  |
+| train/              |          |
+|    actor_loss       | -62.9    |
+|    critic_loss      | 0.112    |
+|    ent_coef         | 0.245    |
+|    ent_coef_loss    | -18.9    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4684     |
+----------------------------------
+[02:15:06]   [PoolingSavings @ 1200000] mean=0.0091  std=0.0130
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 2.53e+05 |
+|    pooling_ratio        | 1.07     |
+|    pooling_savings      | -0.0696  |
+| eval/                   |          |
+|    pooling_savings_mean | 0.00913  |
+|    pooling_savings_std  | 0.013    |
+| sac/                    |          |
+|    actor_grad_norm      | 0.0997   |
+|    critic_grad_norm     | 56.4     |
+|    q1_mean              | 62       |
+|    q1_std               | 0.0952   |
+|    q2_mean              | 62       |
+|    q_spread             | 0.00516  |
+| time/                   |          |
+|    episodes             | 148      |
+|    fps                  | 211      |
+|    time_elapsed         | 5757     |
+|    total_timesteps      | 1217184  |
+| train/                  |          |
+|    actor_loss           | -63.3    |
+|    critic_loss          | 0.00777  |
+|    ent_coef             | 0.24     |
+|    ent_coef_loss        | -19.2    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 4751     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.61e+05 |
+|    pooling_ratio    | 1.09     |
+|    pooling_savings  | -0.0944  |
+| sac/                |          |
+|    actor_grad_norm  | 0.182    |
+|    critic_grad_norm | 95       |
+|    q1_mean          | 63       |
+|    q1_std           | 0.158    |
+|    q2_mean          | 63       |
+|    q_spread         | 0.00963  |
+| time/               |          |
+|    episodes         | 152      |
+|    fps              | 216      |
+|    time_elapsed     | 5802     |
+|    total_timesteps  | 1259072  |
+| train/              |          |
+|    actor_loss       | -63.9    |
+|    critic_loss      | 15.4     |
+|    ent_coef         | 0.229    |
+|    ent_coef_loss    | -19.9    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4915     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.61e+05 |
+|    pooling_ratio    | 1.13     |
+|    pooling_savings  | -0.13    |
+| sac/                |          |
+|    actor_grad_norm  | 0.0867   |
+|    critic_grad_norm | 76.2     |
+|    q1_mean          | 63.3     |
+|    q1_std           | 0.0968   |
+|    q2_mean          | 63.3     |
+|    q_spread         | 0.00891  |
+| time/               |          |
+|    episodes         | 156      |
+|    fps              | 219      |
+|    time_elapsed     | 5823     |
+|    total_timesteps  | 1279488  |
+| train/              |          |
+|    actor_loss       | -64.6    |
+|    critic_loss      | 0.00864  |
+|    ent_coef         | 0.224    |
+|    ent_coef_loss    | -20.2    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 4994     |
+----------------------------------
+Eval num_timesteps=1300000, episode_reward=-24.19 +/- 0.26
+Episode length: 7031.00 +/- 112.02
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.61e+05 |
+|    pooling_ratio    | 0.909    |
+|    pooling_savings  | 0.0909   |
+| eval/               |          |
+|    mean_ep_length   | 7.03e+03 |
+|    mean_reward      | -24.2    |
+| sac/                |          |
+|    actor_grad_norm  | 0.109    |
+|    critic_grad_norm | 55       |
+|    q1_mean          | 63.8     |
+|    q1_std           | 0.102    |
+|    q2_mean          | 63.8     |
+|    q_spread         | 0.00651  |
+| time/               |          |
+|    total_timesteps  | 1300000  |
+| train/              |          |
+|    actor_loss       | -64.9    |
+|    critic_loss      | 0.0104   |
+|    ent_coef         | 0.218    |
+|    ent_coef_loss    | -20.5    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5075     |
+----------------------------------
+[02:23:00]   [PoolingSavings @ 1300000] mean=0.0133  std=0.0100
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 2.61e+05 |
+|    pooling_ratio        | 1.16     |
+|    pooling_savings      | -0.157   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0133   |
+|    pooling_savings_std  | 0.00996  |
+| sac/                    |          |
+|    actor_grad_norm      | 0.0768   |
+|    critic_grad_norm     | 70.8     |
+|    q1_mean              | 63.8     |
+|    q1_std               | 0.0952   |
+|    q2_mean              | 63.8     |
+|    q_spread             | 0.00765  |
+| time/                   |          |
+|    episodes             | 160      |
+|    fps                  | 209      |
+|    time_elapsed         | 6216     |
+|    total_timesteps      | 1303296  |
+| train/                  |          |
+|    actor_loss           | -65      |
+|    critic_loss          | 0.00604  |
+|    ent_coef             | 0.217    |
+|    ent_coef_loss        | -20.6    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 5087     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.61e+05 |
+|    pooling_ratio    | 0.956    |
+|    pooling_savings  | 0.0438   |
+| sac/                |          |
+|    actor_grad_norm  | 0.164    |
+|    critic_grad_norm | 52       |
+|    q1_mean          | 64.6     |
+|    q1_std           | 0.142    |
+|    q2_mean          | 64.6     |
+|    q_spread         | 0.00841  |
+| time/               |          |
+|    episodes         | 164      |
+|    fps              | 213      |
+|    time_elapsed     | 6250     |
+|    total_timesteps  | 1337472  |
+| train/              |          |
+|    actor_loss       | -65.8    |
+|    critic_loss      | 0.0166   |
+|    ent_coef         | 0.209    |
+|    ent_coef_loss    | -21.1    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5221     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.62e+05 |
+|    pooling_ratio    | 1.16     |
+|    pooling_savings  | -0.157   |
+| sac/                |          |
+|    actor_grad_norm  | 0.0811   |
+|    critic_grad_norm | 58.8     |
+|    q1_mean          | 65.3     |
+|    q1_std           | 0.106    |
+|    q2_mean          | 65.3     |
+|    q_spread         | 0.00614  |
+| time/               |          |
+|    episodes         | 168      |
+|    fps              | 219      |
+|    time_elapsed     | 6303     |
+|    total_timesteps  | 1385120  |
+| train/              |          |
+|    actor_loss       | -66.5    |
+|    critic_loss      | 0.00852  |
+|    ent_coef         | 0.198    |
+|    ent_coef_loss    | -21.8    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5407     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.62e+05 |
+|    pooling_ratio    | 1.38     |
+|    pooling_savings  | -0.379   |
+| sac/                |          |
+|    actor_grad_norm  | 0.134    |
+|    critic_grad_norm | 37.8     |
+|    q1_mean          | 65.6     |
+|    q1_std           | 0.132    |
+|    q2_mean          | 65.6     |
+|    q_spread         | 0.00598  |
+| time/               |          |
+|    episodes         | 172      |
+|    fps              | 220      |
+|    time_elapsed     | 6311     |
+|    total_timesteps  | 1391712  |
+| train/              |          |
+|    actor_loss       | -66.7    |
+|    critic_loss      | 0.0102   |
+|    ent_coef         | 0.196    |
+|    ent_coef_loss    | -21.9    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5433     |
+----------------------------------
+Eval num_timesteps=1400000, episode_reward=-25.26 +/- 2.97
+Episode length: 7351.33 +/- 885.40
+----------------------------------
+| env/                |          |
+|    max_peak         | 7.79e+04 |
+|    pooling_ratio    | 1.17     |
+|    pooling_savings  | -0.168   |
+| eval/               |          |
+|    mean_ep_length   | 7.35e+03 |
+|    mean_reward      | -25.3    |
+| sac/                |          |
+|    actor_grad_norm  | 0.151    |
+|    critic_grad_norm | 44.9     |
+|    q1_mean          | 65.8     |
+|    q1_std           | 0.142    |
+|    q2_mean          | 65.8     |
+|    q_spread         | 0.00677  |
+| time/               |          |
+|    total_timesteps  | 1400000  |
+| train/              |          |
+|    actor_loss       | -66.7    |
+|    critic_loss      | 0.00788  |
+|    ent_coef         | 0.194    |
+|    ent_coef_loss    | -22.1    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5465     |
+----------------------------------
+[02:30:56]   [PoolingSavings @ 1400000] mean=0.0059  std=0.0178
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 7.79e+04 |
+|    pooling_ratio        | 1.14     |
+|    pooling_savings      | -0.136   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.00593  |
+|    pooling_savings_std  | 0.0178   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.0535   |
+|    critic_grad_norm     | 51.8     |
+|    q1_mean              | 65.6     |
+|    q1_std               | 0.0971   |
+|    q2_mean              | 65.6     |
+|    q_spread             | 0.00539  |
+| time/                   |          |
+|    episodes             | 176      |
+|    fps                  | 209      |
+|    time_elapsed         | 6690     |
+|    total_timesteps      | 1400928  |
+| train/                  |          |
+|    actor_loss           | -66.8    |
+|    critic_loss          | 0.00707  |
+|    ent_coef             | 0.194    |
+|    ent_coef_loss        | -22.1    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 5469     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.53e+05 |
+|    pooling_ratio    | 0.974    |
+|    pooling_savings  | 0.0259   |
+| sac/                |          |
+|    actor_grad_norm  | 0.107    |
+|    critic_grad_norm | 71.3     |
+|    q1_mean          | 66       |
+|    q1_std           | 0.124    |
+|    q2_mean          | 66       |
+|    q_spread         | 0.00625  |
+| time/               |          |
+|    episodes         | 180      |
+|    fps              | 212      |
+|    time_elapsed     | 6717     |
+|    total_timesteps  | 1425344  |
+| train/              |          |
+|    actor_loss       | -67.1    |
+|    critic_loss      | 0.0054   |
+|    ent_coef         | 0.188    |
+|    ent_coef_loss    | -22.5    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5564     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.61e+05 |
+|    pooling_ratio    | 0.78     |
+|    pooling_savings  | 0.22     |
+| sac/                |          |
+|    actor_grad_norm  | 0.0579   |
+|    critic_grad_norm | 56.4     |
+|    q1_mean          | 66.8     |
+|    q1_std           | 0.0952   |
+|    q2_mean          | 66.8     |
+|    q_spread         | 0.00497  |
+| time/               |          |
+|    episodes         | 184      |
+|    fps              | 216      |
+|    time_elapsed     | 6761     |
+|    total_timesteps  | 1466912  |
+| train/              |          |
+|    actor_loss       | -67.7    |
+|    critic_loss      | 0.0743   |
+|    ent_coef         | 0.179    |
+|    ent_coef_loss    | -23.2    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5727     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.61e+05 |
+|    pooling_ratio    | 1.36     |
+|    pooling_savings  | -0.364   |
+| sac/                |          |
+|    actor_grad_norm  | 0.158    |
+|    critic_grad_norm | 92.3     |
+|    q1_mean          | 67       |
+|    q1_std           | 0.163    |
+|    q2_mean          | 67       |
+|    q_spread         | 0.00714  |
+| time/               |          |
+|    episodes         | 188      |
+|    fps              | 218      |
+|    time_elapsed     | 6781     |
+|    total_timesteps  | 1484704  |
+| train/              |          |
+|    actor_loss       | -68.2    |
+|    critic_loss      | 0.0388   |
+|    ent_coef         | 0.176    |
+|    ent_coef_loss    | -23.4    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5796     |
+----------------------------------
+Eval num_timesteps=1500000, episode_reward=-27.01 +/- 1.71
+Episode length: 8089.67 +/- 548.62
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.61e+05 |
+|    pooling_ratio    | 0.982    |
+|    pooling_savings  | 0.0178   |
+| eval/               |          |
+|    mean_ep_length   | 8.09e+03 |
+|    mean_reward      | -27      |
+| sac/                |          |
+|    actor_grad_norm  | 0.0683   |
+|    critic_grad_norm | 56.5     |
+|    q1_mean          | 67.3     |
+|    q1_std           | 0.0961   |
+|    q2_mean          | 67.3     |
+|    q_spread         | 0.00496  |
+| time/               |          |
+|    total_timesteps  | 1500000  |
+| train/              |          |
+|    actor_loss       | -68.3    |
+|    critic_loss      | 0.00405  |
+|    ent_coef         | 0.173    |
+|    ent_coef_loss    | -23.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 5856     |
+----------------------------------
+[02:39:06]   [PoolingSavings @ 1500000] mean=0.0133  std=0.0165
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.61e+05 |
+|    pooling_ratio        | 0.928    |
+|    pooling_savings      | 0.0721   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0133   |
+|    pooling_savings_std  | 0.0165   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.0518   |
+|    critic_grad_norm     | 58.6     |
+|    q1_mean              | 67.4     |
+|    q1_std               | 0.103    |
+|    q2_mean              | 67.4     |
+|    q_spread             | 0.00483  |
+| time/                   |          |
+|    episodes             | 192      |
+|    fps                  | 209      |
+|    time_elapsed         | 7179     |
+|    total_timesteps      | 1500992  |
+| train/                  |          |
+|    actor_loss           | -68.3    |
+|    critic_loss          | 0.00339  |
+|    ent_coef             | 0.172    |
+|    ent_coef_loss        | -23.7    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 5860     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.61e+05 |
+|    pooling_ratio    | 1.21     |
+|    pooling_savings  | -0.208   |
+| sac/                |          |
+|    actor_grad_norm  | 0.143    |
+|    critic_grad_norm | 84.3     |
+|    q1_mean          | 68       |
+|    q1_std           | 0.122    |
+|    q2_mean          | 68       |
+|    q_spread         | 0.00692  |
+| time/               |          |
+|    episodes         | 196      |
+|    fps              | 213      |
+|    time_elapsed     | 7223     |
+|    total_timesteps  | 1542176  |
+| train/              |          |
+|    actor_loss       | -68.9    |
+|    critic_loss      | 0.0134   |
+|    ent_coef         | 0.164    |
+|    ent_coef_loss    | -24.3    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6021     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.63e+05 |
+|    pooling_ratio    | 1.11     |
+|    pooling_savings  | -0.109   |
+| sac/                |          |
+|    actor_grad_norm  | 0.0771   |
+|    critic_grad_norm | 62.1     |
+|    q1_mean          | 68.4     |
+|    q1_std           | 0.107    |
+|    q2_mean          | 68.4     |
+|    q_spread         | 0.00828  |
+| time/               |          |
+|    episodes         | 200      |
+|    fps              | 217      |
+|    time_elapsed     | 7265     |
+|    total_timesteps  | 1579712  |
+| train/              |          |
+|    actor_loss       | -69.4    |
+|    critic_loss      | 0.0379   |
+|    ent_coef         | 0.157    |
+|    ent_coef_loss    | -25      |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6167     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.63e+05 |
+|    pooling_ratio    | 1.1      |
+|    pooling_savings  | -0.098   |
+| sac/                |          |
+|    actor_grad_norm  | 0.0687   |
+|    critic_grad_norm | 50.8     |
+|    q1_mean          | 68.8     |
+|    q1_std           | 0.0968   |
+|    q2_mean          | 68.8     |
+|    q_spread         | 0.00462  |
+| time/               |          |
+|    episodes         | 204      |
+|    fps              | 219      |
+|    time_elapsed     | 7286     |
+|    total_timesteps  | 1598240  |
+| train/              |          |
+|    actor_loss       | -69.6    |
+|    critic_loss      | 0.00442  |
+|    ent_coef         | 0.154    |
+|    ent_coef_loss    | -25.2    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6240     |
+----------------------------------
+Eval num_timesteps=1600000, episode_reward=-27.14 +/- 2.29
+Episode length: 7839.33 +/- 585.28
+---------------------------------
+| env/               |          |
+|    max_peak        | 1.63e+05 |
+| eval/              |          |
+|    mean_ep_length  | 7.84e+03 |
+|    mean_reward     | -27.1    |
+| time/              |          |
+|    total_timesteps | 1600000  |
+| train/             |          |
+|    actor_loss      | -69.6    |
+|    critic_loss     | 0.00371  |
+|    ent_coef        | 0.154    |
+|    ent_coef_loss   | -25.2    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 6246     |
+---------------------------------
+[02:47:17]   [PoolingSavings @ 1600000] mean=0.0141  std=0.0158
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.65e+05 |
+|    pooling_ratio        | 1.24     |
+|    pooling_savings      | -0.237   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0141   |
+|    pooling_savings_std  | 0.0158   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.0527   |
+|    critic_grad_norm     | 53.3     |
+|    q1_mean              | 69.2     |
+|    q1_std               | 0.0903   |
+|    q2_mean              | 69.2     |
+|    q_spread             | 0.00458  |
+| time/                   |          |
+|    episodes             | 208      |
+|    fps                  | 212      |
+|    time_elapsed         | 7707     |
+|    total_timesteps      | 1635552  |
+| train/                  |          |
+|    actor_loss           | -70.1    |
+|    critic_loss          | 0.00458  |
+|    ent_coef             | 0.147    |
+|    ent_coef_loss        | -25.8    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 6385     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.67e+05 |
+|    pooling_ratio    | 0.967    |
+|    pooling_savings  | 0.0331   |
+| sac/                |          |
+|    actor_grad_norm  | 0.0424   |
+|    critic_grad_norm | 59.7     |
+|    q1_mean          | 70       |
+|    q1_std           | 0.0839   |
+|    q2_mean          | 70       |
+|    q_spread         | 0.00466  |
+| time/               |          |
+|    episodes         | 212      |
+|    fps              | 217      |
+|    time_elapsed     | 7760     |
+|    total_timesteps  | 1686144  |
+| train/              |          |
+|    actor_loss       | -70.5    |
+|    critic_loss      | 0.017    |
+|    ent_coef         | 0.139    |
+|    ent_coef_loss    | -26.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6583     |
+----------------------------------
+Eval num_timesteps=1700000, episode_reward=-25.49 +/- 2.64
+Episode length: 7782.00 +/- 585.71
+----------------------------------
+| env/                |          |
+|    max_peak         | 1.43e+05 |
+|    pooling_ratio    | 1.01     |
+|    pooling_savings  | -0.00715 |
+| eval/               |          |
+|    mean_ep_length   | 7.78e+03 |
+|    mean_reward      | -25.5    |
+| sac/                |          |
+|    actor_grad_norm  | 0.0766   |
+|    critic_grad_norm | 65.4     |
+|    q1_mean          | 70       |
+|    q1_std           | 0.0969   |
+|    q2_mean          | 70       |
+|    q_spread         | 0.00535  |
+| time/               |          |
+|    total_timesteps  | 1700000  |
+| train/              |          |
+|    actor_loss       | -70.6    |
+|    critic_loss      | 0.192    |
+|    ent_coef         | 0.137    |
+|    ent_coef_loss    | -26.8    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6637     |
+----------------------------------
+[02:55:21]   [PoolingSavings @ 1700000] mean=0.0041  std=0.0203
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 1.82e+05 |
+|    pooling_ratio        | 0.748    |
+|    pooling_savings      | 0.252    |
+| eval/                   |          |
+|    pooling_savings_mean | 0.00407  |
+|    pooling_savings_std  | 0.0203   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.12     |
+|    critic_grad_norm     | 51.3     |
+|    q1_mean              | 70.5     |
+|    q1_std               | 0.12     |
+|    q2_mean              | 70.5     |
+|    q_spread             | 0.00505  |
+| time/                   |          |
+|    episodes             | 216      |
+|    fps                  | 209      |
+|    time_elapsed         | 8164     |
+|    total_timesteps      | 1710240  |
+| train/                  |          |
+|    actor_loss           | -70.8    |
+|    critic_loss          | 0.00794  |
+|    ent_coef             | 0.135    |
+|    ent_coef_loss        | -27      |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 6677     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.05     |
+|    pooling_savings  | -0.0502  |
+| sac/                |          |
+|    actor_grad_norm  | 0.0716   |
+|    critic_grad_norm | 55.8     |
+|    q1_mean          | 70.5     |
+|    q1_std           | 0.0862   |
+|    q2_mean          | 70.5     |
+|    q_spread         | 0.00512  |
+| time/               |          |
+|    episodes         | 220      |
+|    fps              | 211      |
+|    time_elapsed     | 8186     |
+|    total_timesteps  | 1730304  |
+| train/              |          |
+|    actor_loss       | -71.2    |
+|    critic_loss      | 0.00238  |
+|    ent_coef         | 0.132    |
+|    ent_coef_loss    | -27.3    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6755     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.07     |
+|    pooling_savings  | -0.0728  |
+| sac/                |          |
+|    actor_grad_norm  | 0.0457   |
+|    critic_grad_norm | 59.4     |
+|    q1_mean          | 70.9     |
+|    q1_std           | 0.0854   |
+|    q2_mean          | 70.9     |
+|    q_spread         | 0.00349  |
+| time/               |          |
+|    episodes         | 224      |
+|    fps              | 215      |
+|    time_elapsed     | 8230     |
+|    total_timesteps  | 1773024  |
+| train/              |          |
+|    actor_loss       | -71.6    |
+|    critic_loss      | 0.00242  |
+|    ent_coef         | 0.125    |
+|    ent_coef_loss    | -28      |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 6922     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.33     |
+|    pooling_savings  | -0.333   |
+| sac/                |          |
+|    actor_grad_norm  | 0.033    |
+|    critic_grad_norm | 69.5     |
+|    q1_mean          | 71.2     |
+|    q1_std           | 0.0826   |
+|    q2_mean          | 71.1     |
+|    q_spread         | 0.00474  |
+| time/               |          |
+|    episodes         | 228      |
+|    fps              | 217      |
+|    time_elapsed     | 8255     |
+|    total_timesteps  | 1795616  |
+| train/              |          |
+|    actor_loss       | -71.6    |
+|    critic_loss      | 19.8     |
+|    ent_coef         | 0.122    |
+|    ent_coef_loss    | -28.4    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7011     |
+----------------------------------
+Eval num_timesteps=1800000, episode_reward=-25.53 +/- 0.69
+Episode length: 7674.33 +/- 143.01
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+| eval/               |          |
+|    mean_ep_length   | 7.67e+03 |
+|    mean_reward      | -25.5    |
+| sac/                |          |
+|    actor_grad_norm  | 0.0802   |
+|    critic_grad_norm | 89.8     |
+|    q1_mean          | 71       |
+|    q1_std           | 0.099    |
+|    q2_mean          | 71       |
+|    q_spread         | 0.00349  |
+| time/               |          |
+|    total_timesteps  | 1800000  |
+| train/              |          |
+|    actor_loss       | -72      |
+|    critic_loss      | 0.014    |
+|    ent_coef         | 0.121    |
+|    ent_coef_loss    | -28.4    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7028     |
+----------------------------------
+[03:03:21]   [PoolingSavings @ 1800000] mean=0.0151  std=0.0156
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 2.09e+05 |
+|    pooling_ratio        | 1.03     |
+|    pooling_savings      | -0.0297  |
+| eval/                   |          |
+|    pooling_savings_mean | 0.0151   |
+|    pooling_savings_std  | 0.0156   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.129    |
+|    critic_grad_norm     | 42.8     |
+|    q1_mean              | 71.6     |
+|    q1_std               | 0.123    |
+|    q2_mean              | 71.6     |
+|    q_spread             | 0.0045   |
+| time/                   |          |
+|    episodes             | 232      |
+|    fps                  | 210      |
+|    time_elapsed         | 8657     |
+|    total_timesteps      | 1823072  |
+| train/                  |          |
+|    actor_loss           | -72.4    |
+|    critic_loss          | 0.0257   |
+|    ent_coef             | 0.118    |
+|    ent_coef_loss        | -28.8    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 7118     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.21     |
+|    pooling_savings  | -0.207   |
+| sac/                |          |
+|    actor_grad_norm  | 0.131    |
+|    critic_grad_norm | 71.6     |
+|    q1_mean          | 72.1     |
+|    q1_std           | 0.14     |
+|    q2_mean          | 72.1     |
+|    q_spread         | 0.0116   |
+| time/               |          |
+|    episodes         | 236      |
+|    fps              | 214      |
+|    time_elapsed     | 8702     |
+|    total_timesteps  | 1864352  |
+| train/              |          |
+|    actor_loss       | -72.7    |
+|    critic_loss      | 0.0813   |
+|    ent_coef         | 0.113    |
+|    ent_coef_loss    | -29.3    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7279     |
+----------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.23     |
+|    pooling_savings  | -0.226   |
+| sac/                |          |
+|    actor_grad_norm  | 0.0533   |
+|    critic_grad_norm | 71.3     |
+|    q1_mean          | 72.1     |
+|    q1_std           | 0.0849   |
+|    q2_mean          | 72.1     |
+|    q_spread         | 0.0058   |
+| time/               |          |
+|    episodes         | 240      |
+|    fps              | 216      |
+|    time_elapsed     | 8732     |
+|    total_timesteps  | 1892064  |
+| train/              |          |
+|    actor_loss       | -72.7    |
+|    critic_loss      | 0.00791  |
+|    ent_coef         | 0.109    |
+|    ent_coef_loss    | -29.8    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7387     |
+----------------------------------
+Eval num_timesteps=1900000, episode_reward=-23.62 +/- 1.54
+Episode length: 7114.67 +/- 499.00
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+| eval/               |          |
+|    mean_ep_length   | 7.11e+03 |
+|    mean_reward      | -23.6    |
+| sac/                |          |
+|    actor_grad_norm  | 0.119    |
+|    critic_grad_norm | 79.7     |
+|    q1_mean          | 72       |
+|    q1_std           | 0.128    |
+|    q2_mean          | 72       |
+|    q_spread         | 0.00541  |
+| time/               |          |
+|    total_timesteps  | 1900000  |
+| train/              |          |
+|    actor_loss       | -72.8    |
+|    critic_loss      | 0.0739   |
+|    ent_coef         | 0.108    |
+|    ent_coef_loss    | -29.8    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7418     |
+----------------------------------
+[03:11:14]   [PoolingSavings @ 1900000] mean=0.0018  std=0.0267
+--------------------------------------
+| env/                    |          |
+|    max_peak             | 2.09e+05 |
+|    pooling_ratio        | 1.24     |
+|    pooling_savings      | -0.235   |
+| eval/                   |          |
+|    pooling_savings_mean | 0.00183  |
+|    pooling_savings_std  | 0.0267   |
+| sac/                    |          |
+|    actor_grad_norm      | 0.0958   |
+|    critic_grad_norm     | 55.3     |
+|    q1_mean              | 72.5     |
+|    q1_std               | 0.102    |
+|    q2_mean              | 72.5     |
+|    q_spread             | 0.00644  |
+| time/                   |          |
+|    episodes             | 244      |
+|    fps                  | 211      |
+|    time_elapsed         | 9144     |
+|    total_timesteps      | 1936288  |
+| train/                  |          |
+|    actor_loss           | -73      |
+|    critic_loss          | 0.00911  |
+|    ent_coef             | 0.104    |
+|    ent_coef_loss        | -30.6    |
+|    learning_rate        | 0.0003   |
+|    n_updates            | 7560     |
+--------------------------------------
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.16     |
+|    pooling_savings  | -0.16    |
+| sac/                |          |
+|    actor_grad_norm  | 0.0326   |
+|    critic_grad_norm | 63.2     |
+|    q1_mean          | 72.7     |
+|    q1_std           | 0.0769   |
+|    q2_mean          | 72.7     |
+|    q_spread         | 0.00529  |
+| time/               |          |
+|    episodes         | 248      |
+|    fps              | 213      |
+|    time_elapsed     | 9164     |
+|    total_timesteps  | 1955680  |
+| train/              |          |
+|    actor_loss       | -73.2    |
+|    critic_loss      | 0.00158  |
+|    ent_coef         | 0.101    |
+|    ent_coef_loss    | -30.9    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7636     |
+----------------------------------
+Eval num_timesteps=2000000, episode_reward=-23.82 +/- 1.58
+Episode length: 7162.33 +/- 677.56
+----------------------------------
+| env/                |          |
+|    max_peak         | 2.09e+05 |
+|    pooling_ratio    | 1.12     |
+|    pooling_savings  | -0.12    |
+| eval/               |          |
+|    mean_ep_length   | 7.16e+03 |
+|    mean_reward      | -23.8    |
+| sac/                |          |
+|    actor_grad_norm  | 0.0327   |
+|    critic_grad_norm | 60.3     |
+|    q1_mean          | 73.1     |
+|    q1_std           | 0.0743   |
+|    q2_mean          | 73.1     |
+|    q_spread         | 0.00454  |
+| time/               |          |
+|    total_timesteps  | 2000000  |
+| train/              |          |
+|    actor_loss       | -73.4    |
+|    critic_loss      | 0.0287   |
+|    ent_coef         | 0.0961   |
+|    ent_coef_loss    | -31.6    |
+|    learning_rate    | 0.0003   |
+|    n_updates        | 7809     |
+----------------------------------
+[03:19:05]   [PoolingSavings @ 2000000] mean=0.0142  std=0.0181
+ 100% ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2,000,128/2,000,000  [ 2:39:37 < 0:00:00 , 1,035 it/s ]
+[03:19:05] Final model saved → output/checkpoints/aug_v3_rewardA/octopus_sac_final

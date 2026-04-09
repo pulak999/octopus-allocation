@@ -12,12 +12,21 @@ Usage
   python evaluate.py --policy rl --model output/checkpoints/octopus_sac_final
 """
 
-import argparse
-import datetime as _dt
-import os
 import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import argparse
+import csv
+import datetime as _dt
+import json
+import os
 
 import numpy as np
+import torch
 
 from octopus.data import load_trace, load_topology
 from octopus.baselines import greedy_alloc, pid_alloc
@@ -27,6 +36,27 @@ from octopus.topology import (
 )
 
 MEM_IDX = 1  # index into VM.rss / machine_sz for memory (GB)
+SUMMARY_FIELDNAMES = [
+    "policy",
+    "trace",
+    "topology",
+    "n_iter",
+    "savings_mean",
+    "savings_min",
+    "savings_max",
+    "savings_std",
+    "pooling_ratio_mean",
+    "pooling_ratio_std",
+    "timestamp",
+]
+DETAIL_FIELDNAMES = [
+    "policy",
+    "trace",
+    "topology",
+    "mapping_seed",
+    "pooling_ratio",
+    "savings",
+]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -105,6 +135,22 @@ def pooling_simulation(
         for node_id in range(len(M))
     }
 
+    # Precompute mhd_to_hosts and Q_j from expanded topology for obs variants A/B.
+    # Must use expanded_M (not base M) — expand_M_to_all_nodes creates a
+    # block-diagonal layout where pod k's MPDs start at k*192, so indices >= 192
+    # only exist here.
+    _mhd_to_hosts_exp = {j: [] for j in range(num_mhd)}
+    for h, mhds in node_mhd_lists.items():
+        for j in mhds:
+            _mhd_to_hosts_exp[j].append(h)
+    _Q_j_exp = np.zeros(num_mhd, dtype=np.float32)
+    for j in range(num_mhd):
+        hosts = _mhd_to_hosts_exp[j]
+        if hosts:
+            inv_deg = [1.0 / len(node_mhd_lists[h]) for h in hosts if node_mhd_lists[h]]
+            if inv_deg:
+                _Q_j_exp[j] = float(np.mean(inv_deg))
+
     # C2: Cache VM tick bounds and memory upfront
     base_sec = base.timestamp()
     vm_cache = {}  # vmkey -> (vm_tick_start, vm_tick_end, mem_gb)
@@ -166,10 +212,12 @@ def pooling_simulation(
     # Per-VM tracking state (only allocated when track_vm_allocs=True)
     if track_vm_allocs:
         mpd_vm_allocs: list = [[] for _ in range(num_mhd)]
+        active_mpds: set = set()  # MPDs with at least one pending alloc entry
         host_cxl_load = np.zeros(pod_size, dtype=float)
         host_dealloc_events = np.zeros((pod_dur, pod_size), dtype=float)
     else:
         mpd_vm_allocs = host_cxl_load = host_dealloc_events = None  # type: ignore[assignment]
+        active_mpds = set()  # type: ignore[assignment]
 
     prev_tick = -1
     evt_idx = 0
@@ -191,11 +239,14 @@ def pooling_simulation(
             for t in range(start_t, min(tick + 1, pod_dur)):
                 host_cxl_load -= host_dealloc_events[t, :]
             np.maximum(host_cxl_load, 0.0, out=host_cxl_load)
-            for j in range(num_mhd):
-                if mpd_vm_allocs[j]:
-                    mpd_vm_allocs[j] = [
-                        (dt, m) for dt, m in mpd_vm_allocs[j] if dt > tick
-                    ]
+            _to_remove = set()
+            for mhd in active_mpds:
+                mpd_vm_allocs[mhd] = [
+                    (dt, m) for dt, m in mpd_vm_allocs[mhd] if dt > tick
+                ]
+                if not mpd_vm_allocs[mhd]:
+                    _to_remove.add(mhd)
+            active_mpds -= _to_remove
 
         # Process all events at this tick
         while evt_idx < n_events and flat_events[evt_idx][0] == tick:
@@ -214,6 +265,8 @@ def pooling_simulation(
                 "base_time": _base,
                 "num_mhd": _num_mhd,
                 "pod_rss_mem": _pod_rss_mem,
+                "mhd_to_hosts": _mhd_to_hosts_exp,
+                "Q_j": _Q_j_exp,
             }
             if track_vm_allocs:
                 ctx["mpd_vm_allocs"] = mpd_vm_allocs
@@ -230,11 +283,14 @@ def pooling_simulation(
             if dealloc_time < pod_dur:
                 dealloc_events[dealloc_time, :] += alloc_vec
 
-            # Update per-VM tracking after allocation
+            # Update per-VM tracking after allocation.
+            # Only mhd_list entries of alloc_vec are non-zero; iterating over
+            # range(num_mhd) ~11,904 times per event was O(num_mhd) like the D_j bug.
             if track_vm_allocs:
-                for j in range(num_mhd):
-                    if alloc_vec[j] > 0 and dealloc_time < pod_dur:
-                        mpd_vm_allocs[j].append((dealloc_time, float(alloc_vec[j])))
+                for mhd in mhd_list:
+                    if alloc_vec[mhd] > 0 and dealloc_time < pod_dur:
+                        mpd_vm_allocs[mhd].append((dealloc_time, float(alloc_vec[mhd])))
+                        active_mpds.add(mhd)
                 host_cxl_load[node_in_pod_id] += mem
                 if dealloc_time < pod_dur:
                     host_dealloc_events[dealloc_time, node_in_pod_id] += mem
@@ -282,6 +338,14 @@ def make_rl_alloc_cb(model, max_degree, obs_variant="current",
     lookahead_window : int
         W (timesteps) for D_j / S_j computation when obs_variant != "current".
     """
+    # Bypass SB3's model.predict wrapper (which calls set_training_mode and
+    # allocates tensors on every invocation).  Extract the policy once, set
+    # eval mode once, and call _predict directly with a pre-allocated buffer.
+    policy = model.policy
+    policy.set_training_mode(False)
+    _device = next(policy.parameters()).device
+    _obs_dim = max_degree * 6 + 2 if obs_variant != "current" else max_degree * 2 + 4
+    _obs_buf = torch.zeros(1, _obs_dim, dtype=torch.float32, device=_device)
 
     def _rl_alloc_cb(cxl_mem, mhd_list, cur_cxl_mem_vec, ctx):
         n_acc = len(mhd_list)
@@ -319,30 +383,35 @@ def make_rl_alloc_cb(model, max_degree, obs_variant="current",
             W = lookahead_window
             t_plus_W = tick + W
 
-            D_j = np.zeros(num_mhd, dtype=np.float64)
-            S_j = np.zeros(num_mhd, dtype=np.float64)
-            for j in range(num_mhd):
-                for dt, mem in mpd_vm_allocs[j]:
-                    if dt <= t_plus_W:
-                        D_j[j] += mem * (1.0 - (dt - tick) / W)
-                    else:
-                        S_j[j] += mem
-
+            # Only compute D_j/S_j for the MPDs we actually observe (mhd_list,
+            # max 8).  The expanded topology has O(num_pods * 192) MPDs total;
+            # iterating over all of them per-event costs ~1.2B iterations/callback.
             obs = np.zeros(max_degree * 6 + 2, dtype=np.float32)
             for k, mhd in enumerate(mhd_list):
+                dj = sj = 0.0
+                for dt, mem in mpd_vm_allocs[mhd]:
+                    if dt <= t_plus_W:
+                        dj += mem * (1.0 - (dt - tick) / W)
+                    else:
+                        sj += mem
                 base_idx = k * 6
                 obs[base_idx]     = float(cur_cxl_mem_vec[mhd]) / norm
-                obs[base_idx + 1] = float(D_j[mhd]) / norm
-                obs[base_idx + 2] = float(S_j[mhd]) / norm
+                obs[base_idx + 1] = dj / norm
+                obs[base_idx + 2] = sj / norm
                 obs[base_idx + 3] = 1.0
-                P_j = float(sum(host_cxl_load[h] for h in mhd_to_hosts[mhd]))
+                _mhd_to_hosts = ctx.get("mhd_to_hosts", mhd_to_hosts)
+                _Q_j = ctx.get("Q_j", Q_j)
+                P_j = float(sum(host_cxl_load[h] for h in _mhd_to_hosts[mhd]))
                 obs[base_idx + 4] = P_j / norm
-                obs[base_idx + 5] = float(Q_j[mhd])
+                obs[base_idx + 5] = float(_Q_j[mhd])
             obs[-2] = float(np.max(cur_cxl_mem_vec)) / norm
             obs[-1] = float(cxl_mem) / norm
 
-        # Predict
-        action, _ = model.predict(obs, deterministic=True)
+        # Predict — write obs directly into pre-allocated GPU buffer,
+        # call policy._predict once (no set_training_mode, no tensor alloc).
+        _obs_buf[0].copy_(torch.from_numpy(obs))
+        with torch.no_grad():
+            action = policy._predict(_obs_buf, deterministic=True).cpu().numpy()[0]
 
         # Softmax → proportions → allocation
         raw = action[:n_acc].astype(np.float64)
@@ -362,7 +431,8 @@ def make_rl_alloc_cb(model, max_degree, obs_variant="current",
 # ═══════════════════════════════════════════════════════════════════════
 #  Main evaluation loop (mirrors notebook cells 14-16)
 # ═══════════════════════════════════════════════════════════════════════
-def run_eval(policy_name, alloc_fn, matrix, trace_data, n_iter=50, alloc_fn_factory=None):
+def run_eval(policy_name, alloc_fn, matrix, trace_data, n_iter=50, alloc_fn_factory=None,
+             track_vm_allocs=False):
     """Run *n_iter* random pod mappings, print summary statistics.
 
     If *alloc_fn_factory* is provided it is called once per iteration (with no
@@ -370,31 +440,46 @@ def run_eval(policy_name, alloc_fn, matrix, trace_data, n_iter=50, alloc_fn_fact
     """
     all_vms, node_to_vms, node_to_machine, _vtsz, machine_sz = trace_data
 
-    result_list = []
+    savings_list = []
+    ratio_list = []
+    detail_rows = []
     for i in range(n_iter):
         print(f"\r  {policy_name}: iteration {i}/{n_iter}", end="", flush=True)
         fn = alloc_fn_factory() if alloc_fn_factory is not None else alloc_fn
-        pod_to_nodes = generate_pod_to_nodes(
-            node_to_vms, len(matrix), 10086 + i
-        )
+        seed = 10086 + i
+        pod_to_nodes = generate_pod_to_nodes(node_to_vms, len(matrix), seed)
         node_to_M, expanded_M = expand_M_to_all_nodes(matrix, pod_to_nodes)
         ratio = pooling_simulation(
             node_to_M, expanded_M, fn,
             all_vms, node_to_vms, node_to_machine, machine_sz,
+            track_vm_allocs=track_vm_allocs,
         )
-        result_list.append(1.0 - ratio)
+        savings = 1.0 - ratio
+        ratio_list.append(ratio)
+        savings_list.append(savings)
+        detail_rows.append(
+            {
+                "mapping_seed": seed,
+                "pooling_ratio": float(ratio),
+                "savings": float(savings),
+            }
+        )
 
     print()
-    avg = np.mean(result_list)
-    mn = np.min(result_list)
-    mx = np.max(result_list)
-    std = np.std(result_list)
+    avg = np.mean(savings_list)
+    mn = np.min(savings_list)
+    mx = np.max(savings_list)
+    std = np.std(savings_list)
     print(f"  {policy_name}:")
     print(f"    avg:  {avg:.4f}")
     print(f"    min:  {mn:.4f}")
     print(f"    max:  {mx:.4f}")
     print(f"    std:  {std:.4f}")
-    return result_list
+    return {
+        "savings": savings_list,
+        "ratios": ratio_list,
+        "detail_rows": detail_rows,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -426,6 +511,17 @@ def main():
         help="Path to trained SB3 model (required when --policy includes rl)",
     )
     ap.add_argument("--n-iter", type=int, default=50)
+    ap.add_argument(
+        "--out-dir",
+        default=None,
+        help="Optional output directory for CSVs (summary/detail). "
+        "If unset, no files are written.",
+    )
+    ap.add_argument(
+        "--out-prefix",
+        default="evaluate",
+        help="Filename prefix for output CSVs when --out-dir is set.",
+    )
     args = ap.parse_args()
 
     print(f"Loading trace: {args.trace} …")
@@ -462,10 +558,45 @@ def main():
         md5 = hashlib.md5(open(check_path, "rb").read()).hexdigest()
         print(f"Loading RL model: {check_path}")
         print(f"  md5: {md5}")
+
+        # Read reward_variant and lookahead_window from checkpoint config if present
+        reward_variant = "current"
+        lookahead_window = 200
+        config_path = os.path.join(os.path.dirname(model_path), "config.json")
+        if os.path.exists(config_path):
+            with open(config_path) as _f:
+                _cfg = json.load(_f)
+            reward_variant = _cfg.get("reward_variant", "current")
+            lookahead_window = int(_cfg.get("lookahead_window", 200))
+            print(f"  reward_variant: {reward_variant}  lookahead_window: {lookahead_window}")
+
+        # Compute mhd_to_hosts and Q_j from base topology (same structure for all pods)
+        num_mhd = len(M[0])
+        pod_size = len(M)
+        _host_to_mhds = {h: [j for j in range(num_mhd) if M[h][j] != 0] for h in range(pod_size)}
+        mhd_to_hosts = {j: [] for j in range(num_mhd)}
+        for h, mhds in _host_to_mhds.items():
+            for j in mhds:
+                mhd_to_hosts[j].append(h)
+        Q_j = np.zeros(num_mhd, dtype=np.float32)
+        for j in range(num_mhd):
+            hosts = mhd_to_hosts[j]
+            if hosts:
+                inv_deg = [1.0 / len(_host_to_mhds[h]) for h in hosts if _host_to_mhds[h]]
+                if inv_deg:
+                    Q_j[j] = float(np.mean(inv_deg))
+
         model = SAC.load(args.model)
-        rl_cb = make_rl_alloc_cb(model, max_deg)
+        rl_cb = make_rl_alloc_cb(
+            model, max_deg,
+            obs_variant=reward_variant,
+            mhd_to_hosts=mhd_to_hosts,
+            Q_j=Q_j,
+            lookahead_window=lookahead_window,
+        )
         results["rl"] = run_eval(
-            "RL (SAC)", rl_cb, M, trace_data, args.n_iter
+            "RL (SAC)", rl_cb, M, trace_data, args.n_iter,
+            track_vm_allocs=(reward_variant != "current"),
         )
 
     # ── PID ──────────────────────────────────────────────────────────
@@ -484,8 +615,60 @@ def main():
     # ── Summary ──────────────────────────────────────────────────────
     if len(results) > 1:
         print("\n── Comparison ──")
-        for name, vals in results.items():
+        for name, payload in results.items():
+            vals = payload["savings"]
             print(f"  {name:>10s}:  avg={np.mean(vals):.4f}  std={np.std(vals):.4f}")
+
+    if args.out_dir:
+        os.makedirs(args.out_dir, exist_ok=True)
+        ts = _dt.datetime.utcnow().isoformat()
+        summary_path = os.path.join(args.out_dir, f"{args.out_prefix}_summary.csv")
+        detail_path = os.path.join(args.out_dir, f"{args.out_prefix}_detail.csv")
+
+        summary_rows = []
+        detail_rows = []
+        for name, payload in results.items():
+            savings_arr = np.asarray(payload["savings"], dtype=float)
+            ratio_arr = np.asarray(payload["ratios"], dtype=float)
+            summary_rows.append(
+                {
+                    "policy": name,
+                    "trace": args.trace,
+                    "topology": args.topology,
+                    "n_iter": args.n_iter,
+                    "savings_mean": float(np.mean(savings_arr)),
+                    "savings_min": float(np.min(savings_arr)),
+                    "savings_max": float(np.max(savings_arr)),
+                    "savings_std": float(np.std(savings_arr)),
+                    "pooling_ratio_mean": float(np.mean(ratio_arr)),
+                    "pooling_ratio_std": float(np.std(ratio_arr)),
+                    "timestamp": ts,
+                }
+            )
+            for row in payload["detail_rows"]:
+                detail_rows.append(
+                    {
+                        "policy": name,
+                        "trace": args.trace,
+                        "topology": args.topology,
+                        "mapping_seed": row["mapping_seed"],
+                        "pooling_ratio": row["pooling_ratio"],
+                        "savings": row["savings"],
+                    }
+                )
+
+        with open(summary_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=SUMMARY_FIELDNAMES)
+            w.writeheader()
+            w.writerows(summary_rows)
+
+        with open(detail_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=DETAIL_FIELDNAMES)
+            w.writeheader()
+            w.writerows(detail_rows)
+
+        print(f"\nSaved summary CSV: {summary_path}")
+        print(f"Saved detail CSV:  {detail_path}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,564 @@
+\documentclass[11pt,aspectratio=43]{beamer}
+
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,patterns}
+
+\definecolor{accent}{HTML}{2E75B6}
+\definecolor{red2}{HTML}{C0392B}
+\definecolor{green2}{HTML}{27AE60}
+\definecolor{orange2}{HTML}{E67E22}
+
+\setbeameroption{hide notes}
+\setbeamertemplate{navigation symbols}{}
+\setbeamersize{text margin left=0.8cm,text margin right=0.8cm}
+
+\setbeamercolor{normal text}{fg=black,bg=white}
+\setbeamercolor{frametitle}{fg=black,bg=white}
+\setbeamercolor{title}{fg=black}
+\setbeamercolor{structure}{fg=black}
+\setbeamercolor{alerted text}{fg=accent}
+\setbeamercolor{block title}{fg=black,bg=black!10}
+\setbeamercolor{block body}{fg=black,bg=black!3}
+\setbeamercolor{itemize item}{fg=black}
+\setbeamercolor{itemize subitem}{fg=black}
+
+\setbeamerfont{title}{size=\normalsize,series=\bfseries}
+\setbeamerfont{frametitle}{size=\normalsize,series=\bfseries}
+\setbeamerfont{block title}{size=\normalsize,series=\bfseries}
+\setbeamerfont{block body}{size=\normalsize}
+
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=\paperwidth,ht=2.8ex,dp=1.2ex,rightskip=0.8cm]{author in head/foot}%
+      \insertframenumber
+    \end{beamercolorbox}%
+  }%
+}
+
+\title{Octopus CXL Memory Pooling:\\RL vs.\ Greedy, Training System, and Next Steps}
+\author{Pulak Mehrotra}
+\date{April 2026}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \titlepage
+\end{frame}
+
+% =========================================================================
+% SLIDE 1 — Three takeaways upfront
+% =========================================================================
+
+\begin{frame}{Three takeaways.}
+
+  \begin{enumerate}
+    \setlength{\itemsep}{1.0em}
+
+    \item \textbf{RL beats greedy dramatically on two held-out traces.}
+          The learned policy achieves near-break-even pooling savings while
+          greedy needs 4--13$\times$ more MPD capacity.
+          The system generalises to unseen workloads.
+
+    \item \textbf{The training system is not the bottleneck.}
+          Data augmentation across 10 traces, a redesigned reward, and
+          32 parallel environments eliminated the collapse failure and enabled
+          generalisation.
+
+    \item \textbf{The remaining ceiling is a reward design problem.}
+          % VET: This is interpretive. Confirm before presenting.
+          Savings plateau at $\sim$1--2\% from 100k steps onward with no
+          improvement over 2M steps.
+          The agent learns to game the proxy reward rather than maximise
+          true pooling savings.
+  \end{enumerate}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 2 — RL vs Greedy on held-out traces (the result)
+% =========================================================================
+
+\begin{frame}{RL outperforms greedy on both held-out test traces.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.52\textwidth}
+
+      \begin{block}{Pooling ratio (lower = better; 1.0 = break even)}
+        \small
+        \begin{center}
+        \begin{tikzpicture}[scale=0.82]
+          % Axes
+          \draw[->] (0,0) -- (5.2,0) node[right,font=\scriptsize] {};
+          \draw[->] (0,0) -- (0,4.8);
+
+          % Break-even line
+          \draw[dashed, gray] (0,0.35) -- (5.1,0.35)
+            node[right,font=\scriptsize,gray] {break even};
+
+          % Bars — AMS20
+          % Greedy: 3.77, scaled /4 * 4.4 = ~4.15
+          \fill[red2!70] (0.3,0) rectangle (1.05,4.15);
+          % RL: 0.982, scaled
+          \fill[accent!80] (1.15,0) rectangle (1.90,1.08);
+
+          % Bars — LVL01 (capped at axis, greedy=12.97)
+          % Cap at 4.6 for display, annotate real value
+          \fill[red2!70] (2.8,0) rectangle (3.55,4.6);
+          \node[font=\tiny,rotate=90,anchor=south] at (3.175,4.6) {12.97};
+          % RL: 1.06
+          \fill[accent!80] (3.65,0) rectangle (4.40,1.16);
+
+          % Tick labels y-axis
+          \foreach \y/\lab in {0/0, 0.88/1, 1.76/2, 2.64/3, 3.52/4} {
+            \draw (-0.08,\y) -- (0,\y);
+            \node[left,font=\scriptsize] at (-0.08,\y) {\lab};
+          }
+
+          % Value labels on bars
+          \node[font=\scriptsize,above] at (0.675,4.15) {3.77};
+          \node[font=\scriptsize,above] at (1.525,1.08) {\textbf{0.98}};
+          \node[font=\scriptsize,above] at (4.025,1.16) {\textbf{1.06}};
+
+          % X labels
+          \node[font=\scriptsize,below] at (1.1,-0.15) {AMS20};
+          \node[font=\scriptsize,below] at (3.6,-0.15) {LVL01};
+
+          % Legend
+          \fill[red2!70] (0.2,4.3) rectangle (0.6,4.55);
+          \node[right,font=\scriptsize] at (0.65,4.425) {Greedy};
+          \fill[accent!80] (2.2,4.3) rectangle (2.6,4.55);
+          \node[right,font=\scriptsize] at (2.65,4.425) {RL (run 7)};
+        \end{tikzpicture}
+        \end{center}
+      \end{block}
+
+    \column{0.48\textwidth}
+      \begin{block}{What this means}
+        \small
+        \begin{itemize}
+          \setlength{\itemsep}{0.4em}
+          \item Pooling ratio $< 1$: fewer MPDs needed than a
+                non-pooled baseline.
+          \item Greedy needs 3.77$\times$ the capacity on AMS20
+                and 12.97$\times$ on LVL01 because it piles load
+                onto the same MPDs.
+          \item RL (run 7) is at 0.98 and 1.06 ---
+                near break-even on both traces it has never seen.
+          \item \textbf{$n = 50$ random pod mappings} per data point
+                (error bars: std $\approx 0.02$--$0.22$).
+        \end{itemize}
+      \end{block}
+
+      \vspace{0.4em}
+      \begin{block}{}
+        \small
+        AMS20 = Amsterdam (steady, memory-heavy).\\
+        LVL01 = Louisville (bursty, highest VM count).\\
+        Neither trace was seen during training.
+      \end{block}
+  \end{columns}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 3 — Why greedy fails (MPD load timeseries)
+% =========================================================================
+
+\begin{frame}{Greedy packs load onto a few MPDs; RL spreads it.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.50\textwidth}
+      \textbf{Greedy} (least-loaded MPD first)
+      \includegraphics[width=\linewidth]{%
+        ../../../../output/plots/memory_pooling/%
+        LON23PrdApp01-troundgrt5m.sqlite_mhd_timeseries_greedy_pct0.5_pod16.png}
+      \vspace{0.15em}
+      \begin{center}
+        \small A few MPDs hit the ceiling; most are idle.
+      \end{center}
+
+    \column{0.50\textwidth}
+      \textbf{RL (run 7, reward A)}
+      \includegraphics[width=\linewidth]{%
+        ../../../../output/plots/memory_pooling/%
+        LON23PrdApp01-troundgrt5m.sqlite_mhd_timeseries_rl_pct0.5_pod16.png}
+      \vspace{0.15em}
+      \begin{center}
+        \small Load spread across MPDs; no single bottleneck.
+      \end{center}
+  \end{columns}
+
+  \vspace{0.3em}
+  \begin{center}
+    \small
+    \textit{LON23 trace (validation), CXL fraction 0.5, pod of 16 nodes.
+    Each line = one MPD's load over time.}
+  \end{center}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 4 — Training system: what changed
+% =========================================================================
+
+\begin{frame}{Two independent improvements were needed to get here.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.50\textwidth}
+      \begin{block}{1. Data: augmentation across 10 traces}
+        \small
+        \begin{itemize}
+          \setlength{\itemsep}{0.25em}
+          \item \textbf{Before:} trained on one trace, one pod mapping.
+                Policy memorised a single datacenter's pattern.
+          \item \textbf{After:} 7 training traces, random pod seed
+                per episode, memory scale jitter $s \in [0.7, 1.2]$.
+          \item Episodes are diverse in workload intensity and
+                VM arrival patterns.
+        \end{itemize}
+      \end{block}
+
+      \vspace{0.5em}
+
+      \begin{block}{2. Throughput: 32 parallel environments}
+        \small
+        \begin{itemize}
+          \setlength{\itemsep}{0.25em}
+          \item Bottleneck was CPU serial rollout, not GPU.
+          \item \texttt{SubprocVecEnv(N=32)}: \textbf{26$\times$} speedup
+                ($46 \to 1{,}221$ steps/sec).
+          \item 2M steps now takes $\sim$14 min of training time.
+        \end{itemize}
+      \end{block}
+
+    \column{0.50\textwidth}
+
+      \begin{center}
+      \begin{tikzpicture}[
+          every node/.style={font=\small},
+          box/.style={draw,rounded corners=2pt,fill=black!5,
+                      minimum height=0.65cm,align=center,inner sep=5pt},
+          arr/.style={-{Latex[length=2mm]},line width=0.9pt}
+      ]
+        \node[box,minimum width=3.6cm] (traces) at (0,3.2)
+              {10 Azure traces (7 train / 2 test / 1 val)};
+
+        \node[box,minimum width=3.6cm] (aug) at (0,2.1)
+              {Episode augmentation\\scale $s$, pod seed, multi-trace};
+
+        \node[box,minimum width=3.6cm,fill=accent!12] (envs) at (0,0.9)
+              {32 parallel environments\\(SubprocVecEnv)};
+
+        \node[box,minimum width=3.6cm,fill=accent!12] (sac) at (0,-0.2)
+              {SAC (replay buffer 300k,\\batch 512, $\gamma=0.999$)};
+
+        \node[box,minimum width=3.6cm] (eval) at (0,-1.3)
+              {Eval: 50 random pod mappings\\on held-out test traces};
+
+        \draw[arr] (traces) -- (aug);
+        \draw[arr] (aug) -- (envs);
+        \draw[arr] (envs) -- (sac);
+        \draw[arr] (sac) -- (eval);
+      \end{tikzpicture}
+      \end{center}
+  \end{columns}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 5 — Reward redesign: departure relief
+% =========================================================================
+
+\begin{frame}{The reward was redesigned to score durable load, not raw load.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.50\textwidth}
+      \begin{block}{Old reward (run 6 --- collapsed)}
+        \small
+        Penalise increase in the \emph{single worst MPD's} raw load.
+        \begin{itemize}
+          \setlength{\itemsep}{0.2em}
+          \item All other MPDs invisible --- zero gradient signal.
+          \item No departure model: 80\,GB departing in 10 minutes
+                looks the same as 80\,GB staying for 3 days.
+          \item \textbf{Result:} entropy collapsed at 100k steps;
+                policy jammed all load onto one MPD.
+        \end{itemize}
+      \end{block}
+
+    \column{0.50\textwidth}
+      \begin{block}{New reward A (run 7 --- stable)}
+        \small
+        Penalise the worst \emph{projected sticky load} among
+        all MPDs this host can reach.
+        \begin{itemize}
+          \setlength{\itemsep}{0.2em}
+          \item Sticky load = current load $-$ memory leaving in $\sim$17\,hrs.
+          \item Every reachable MPD generates signal every step.
+          \item \textbf{Result:} entropy healthy throughout 2M steps;
+                load spread evenly.
+        \end{itemize}
+      \end{block}
+  \end{columns}
+
+  \vspace{0.5em}
+
+  \begin{center}
+  \begin{tikzpicture}[every node/.style={font=\small}, scale=0.95]
+    % Timeline bar
+    \draw[->,line width=1pt] (0,0) -- (8.5,0) node[right,font=\scriptsize]{time};
+
+    % Two VMs on MPD j
+    % VM A: departs soon (red)
+    \fill[red2!50,rounded corners=1pt] (1.0,0.25) rectangle (2.2,0.65);
+    \node[font=\scriptsize] at (1.6,0.45) {VM A, 40\,GB};
+    \draw[red2,dashed,line width=0.8pt] (2.2,0.25) -- (2.2,-0.3)
+      node[below,font=\scriptsize,red2] {depart in 1\,hr};
+
+    % VM B: stays (blue)
+    \fill[accent!50,rounded corners=1pt] (1.0,0.75) rectangle (6.5,1.15);
+    \node[font=\scriptsize] at (3.7,0.95) {VM B, 60\,GB};
+    \draw[accent,dashed,line width=0.8pt] (6.5,0.75) -- (6.5,-0.3)
+      node[below,font=\scriptsize,accent] {depart in 48\,hrs};
+
+    % Now marker
+    \draw[line width=1.2pt] (1.0,1.35) -- (1.0,-0.1);
+    \node[above,font=\scriptsize\bfseries] at (1.0,1.35) {now};
+
+    % Annotation
+    \node[font=\scriptsize,align=left] at (7.5,0.7) {%
+      Raw load: 100\,GB\\
+      Sticky load: $\approx$\,62\,GB\\
+      \textbf{Place here.}};
+
+  \end{tikzpicture}
+  \end{center}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 6 — The ceiling: savings plateau
+% =========================================================================
+
+\begin{frame}{Savings plateau at $\sim$1--2\% from step 100k onward.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.52\textwidth}
+
+      \begin{center}
+      \begin{tikzpicture}[scale=0.88, every node/.style={font=\scriptsize}]
+        % Axes
+        \draw[->] (0,0) -- (5.8,0) node[right] {steps ($\times$1M)};
+        \draw[->] (0,-1.5) -- (0,2.2) node[above] {savings (\%)};
+
+        % Zero line
+        \draw[dashed,gray,line width=0.6pt] (0,0) -- (5.7,0);
+
+        % Run 6 — collapses (old reward)
+        % Goes from 0 at 0 steps, down to about -62% by 600k steps
+        \draw[red2,line width=1.2pt]
+          (0,0) .. controls (0.5,0.1) and (1.0,0.1) ..
+          (1.2,0.05) .. controls (1.5,-0.2) and (2.0,-0.8) ..
+          (2.5,-1.5);
+        \node[red2,right] at (2.5,-1.5) {run 6 (old reward)};
+
+        % Run 7 — plateau (reward A)
+        % Goes from -0.06 at 0, jumps to ~1.5% by 40k, then flat noise around 1%
+        \draw[accent,line width=1.2pt]
+          (0,0) .. controls (0.3,1.2) and (0.5,1.3) ..
+          (0.8,1.2) .. controls (1.5,1.0) and (2.5,1.1) ..
+          (3.5,1.1) .. controls (4.0,0.9) and (4.5,1.1) .. (5.5,0.8);
+        \node[accent,right] at (5.5,0.8) {run 7 (reward A)};
+
+        % Ceiling annotation
+        \draw[orange2,dashed,line width=0.8pt] (0.8,1.8) -- (5.5,1.8);
+        \node[orange2] at (3.2,2.05) {$\sim$1--2\% ceiling (no improvement after 100k steps)};
+
+        % X ticks
+        \foreach \x/\lab in {0/0, 1.1/0.2, 2.2/0.4, 3.3/0.6, 4.4/0.8, 5.5/1.0} {
+          \draw (\x,-0.07) -- (\x,0.07);
+          \node[below] at (\x,-0.12) {\lab};
+        }
+        % Y ticks
+        \foreach \y/\lab in {-1.5/-60, -0.75/-30, 0/0, 0.75/+30, 1.5/+60} {
+          \draw (-0.08,\y) -- (0,\y);
+          \node[left] at (-0.12,\y) {\lab};
+        }
+      \end{tikzpicture}
+      \end{center}
+
+    \column{0.48\textwidth}
+      \begin{block}{What we see}
+        \small
+        \begin{itemize}
+          \setlength{\itemsep}{0.3em}
+          \item Run 6 (old reward): policy collapses by 400k steps.
+                Entropy hits $\alpha = 0.001$;
+                savings dive to $-62\%$.
+          \item Run 7 (reward A): stable, doesn't collapse.
+                Reaches 1--2\% within 40k steps and \emph{stays there}
+                for the full 2M steps.
+          \item 2M steps $\times$ 32 envs $\approx$ 64M environment
+                interactions.  More training is not the fix.
+        \end{itemize}
+      \end{block}
+
+      \begin{block}{}
+        \small
+        % VET: Confirm framing before presenting.
+        The plateau appears within the first 100k steps and does
+        not improve with more data or more training.
+        This points to a \textbf{reward design problem}, not a
+        capacity or data problem.
+      \end{block}
+  \end{columns}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 7 — What the agent actually learned (reward hacking)
+% =========================================================================
+
+\begin{frame}{The agent is gaming the proxy reward, not maximising savings.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.52\textwidth}
+      \begin{block}{What we asked for}
+        \small
+        Minimise the worst \emph{projected sticky load} among reachable MPDs.
+        We hoped this would translate to low peak load over the full trace.
+      \end{block}
+
+      \vspace{0.3em}
+
+      \begin{block}{What the agent learned}
+        \small
+        Spread memory uniformly across reachable MPDs at every step.
+        This minimises the per-step proxy reward perfectly ---
+        but it \emph{ignores topology}: not all MPDs are equally
+        shared, so uniform spread is not the same as globally balanced
+        allocation.
+      \end{block}
+
+      \vspace{0.3em}
+
+      \begin{block}{The gap}
+        \small
+        % VET: This is interpretive. Confirm with ablation if possible.
+        The proxy reward (one step, one host's MPDs) cannot see the
+        downstream effect of placing long-lived VMs on MPDs that
+        many future hosts will also need.
+      \end{block}
+
+    \column{0.48\textwidth}
+
+      \begin{center}
+      \begin{tikzpicture}[
+          every node/.style={font=\small},
+          host/.style={draw,circle,fill=blue!12,minimum size=0.7cm},
+          mpd/.style={draw,rounded corners=2pt,fill=orange!20,
+                      minimum width=1.1cm,minimum height=0.6cm,align=center,
+                      font=\scriptsize},
+          arr/.style={-{Latex[length=2mm]},line width=0.9pt}
+      ]
+        \node[host] (h0) at (0,2.6) {$S_0$};
+        \node[host] (h1) at (0,1.3) {$S_1$};
+        \node[host] (h2) at (0,0.0) {$S_2$};
+
+        \node[mpd] (p0) at (3.4,2.6) {$P_0$\\hot};
+        \node[mpd] (p1) at (3.4,1.3) {$P_1$\\hot};
+        \node[mpd] (p2) at (3.4,0.0) {$P_2$\\idle};
+
+        \draw (h0) -- (p0);
+        \draw (h0) -- (p1);
+        \draw (h1) -- (p0);
+        \draw (h1) -- (p2);
+        \draw (h2) -- (p1);
+        \draw (h2) -- (p2);
+
+        % S1 splits evenly between P0 and P2 (looks good locally)
+        \draw[accent,very thick] (h1) -- (p0)
+          node[midway,above,font=\scriptsize,accent] {50\%};
+        \draw[accent,very thick] (h1) -- (p2)
+          node[midway,below,font=\scriptsize,accent] {50\%};
+
+        % But P0 is already overloaded
+        \draw[red2,line width=2pt] (p0) circle (0.38);
+        \node[red2,right=0.1cm of p0,font=\scriptsize] {bottleneck};
+
+        \node[font=\scriptsize,align=center] at (1.7,-0.9)
+          {Agent sees: $S_1$'s reachable MPDs look equal.\\
+           Reality: $P_0$ is shared by many hosts.};
+      \end{tikzpicture}
+      \end{center}
+  \end{columns}
+
+\end{frame}
+
+% =========================================================================
+% SLIDE 8 — Next steps
+% =========================================================================
+
+\begin{frame}{Two concrete fixes for tomorrow.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.50\textwidth}
+      \begin{block}{Fix 1: Optimal-gap reward shaping}
+        \small
+        We have an exact solver (\texttt{find\_optimal}) that computes
+        the best achievable peak for any snapshot of host demands
+        using max-flow.
+
+        \vspace{0.4em}
+        Add a penalty proportional to how far above optimal the
+        agent's allocation sits:
+        \[
+          r_t' = r_t^A - \beta \cdot
+          \frac{c_{\max}^{\text{post}} - t^*(s_t)}{D_{\text{pod}}}
+        \]
+
+        \vspace{0.2em}
+        The agent now knows exactly how far from optimal it is at
+        every step --- not just whether the proxy improved.
+      \end{block}
+
+    \column{0.50\textwidth}
+      \begin{block}{Fix 2: Behavioral cloning warm-start}
+        \small
+        The solver also produces optimal allocation \emph{weights}
+        (flow solution $\to$ GB per MPD $\to$ normalised proportions).
+
+        \vspace{0.4em}
+        Pre-train the actor on these $(s, a^*)$ pairs before SAC
+        starts.  The policy begins near ``instantaneously optimal''
+        rather than random, preventing early entropy collapse.
+
+        \vspace{0.4em}
+        SAC then fine-tunes from that warm start toward
+        temporally optimal (accounts for VM lifetimes).
+      \end{block}
+  \end{columns}
+
+  \vspace{0.6em}
+
+  \begin{center}
+  \small
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Current failure} & \textbf{Fix} & \textbf{Expected signal} \\
+    \midrule
+    Proxy reward is gameable & Optimal-gap penalty & Savings above 2\% \\
+    Random init $\to$ entropy collapse & BC pre-train & Stable early training \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+\end{frame}
+
+\end{document}
