@@ -1,3 +1,30 @@
+## [2026-04-09] Async Eval Worker — Timing Instrumentation (async-plan)
+
+### Features Implemented
+- **Worker timing**: `_eval_worker_main` now records `worker_wall_s` (perf_counter around the n_iter eval loop) and includes it as a 4th element in the result tuple: `(mean, std, snap_step, worker_wall_s)`
+- **Dispatch timing**: `_on_step` times the state_dict copy + queue.put with `perf_counter`, logs `eval/dispatch_wall_ms` to SB3 logger (verifies non-blocking: expected < 100ms)
+- **Worker wall time logged**: `eval/worker_wall_s` logged to SB3 logger when a result is collected (expected ~133s, but fully hidden behind training)
+- **Total training wall time**: `main()` wraps `model.learn()` with `perf_counter` and prints `Training complete — wall time: X.X min (Xs)` on completion
+- **Test fix**: Updated `tests/test_async_eval.py` to unpack 4-tuple result; added `worker_wall_s` type/range assertions in `test_returns_mean_std_snap_step`
+
+### Files Changed
+| File | What changed |
+|------|-------------|
+| `scripts/train_rl.py` | `_eval_worker_main`: timing around eval loop, 4-element result tuple; `_on_step`: dispatch timing + `eval/dispatch_wall_ms` log, 4-tuple unpack; `on_training_end`: 4-tuple unpack; `main()`: perf_counter wrap around `model.learn()` |
+| `tests/test_async_eval.py` | 4-tuple unpacks in `test_returns_mean_std_snap_step` and `test_mean_in_valid_range`; added `worker_wall_s` assertions |
+
+### Functions Written
+| Function | File | Description |
+|----------|------|-------------|
+| (no new functions) | — | All changes were inline additions to existing functions |
+
+### Notes
+- The async worker was already fully implemented before this session; only the timing/metrics instrumentation was missing
+- `eval/dispatch_wall_ms` should be < 100ms per trigger (state_dict copy ~50ms for 256×256 net)
+- `eval/worker_wall_s` shows true eval cost (~133s) but it is overlapped — the main process never sees that latency
+- The 4-tuple format change required updating the existing test assertions; all 8 async eval tests pass
+- Pre-existing failures in `test_new_reward_obs.py` (23 tests, `TypeError: OctopusMemP...`) are unrelated to this work
+
 ## [2026-03-26] New State Space & Rewards — Task 4 (plan-v2)
 
 ### Features Implemented
