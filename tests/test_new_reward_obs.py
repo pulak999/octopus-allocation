@@ -8,6 +8,13 @@ import pytest
 # Helpers: minimal topology + env construction without trace files
 # ---------------------------------------------------------------------------
 
+def _make_trace_arrays(all_vms, node_to_vms, node_to_machine, machine_sz):
+    """Convert synthetic VM dicts to TraceArrays so tests don't use the old API."""
+    from octopus.data import to_arrays
+    trace_data = (all_vms, node_to_vms, node_to_machine, {}, machine_sz)
+    return to_arrays(trace_data)
+
+
 def _make_minimal_env(reward_variant="current", **kwargs):
     """Create a minimal OctopusMemPoolEnv with synthetic trace data (no files)."""
     from octopus.env import OctopusMemPoolEnv
@@ -36,11 +43,10 @@ def _make_minimal_env(reward_variant="current", **kwargs):
     node_to_machine = {0: "mtype", 1: "mtype"}
     machine_sz = {"mtype": [0, 100.0, 0, 0]}  # 100 GB DRAM (mem_idx=1)
 
+    trace_arrays = _make_trace_arrays(all_vms, node_to_vms, node_to_machine, machine_sz)
+
     env = OctopusMemPoolEnv(
-        all_vms=all_vms,
-        node_to_vms=node_to_vms,
-        node_to_machine=node_to_machine,
-        machine_sz=machine_sz,
+        trace_arrays=trace_arrays,
         M=M,
         seed=0,
         reward_variant=reward_variant,
@@ -90,11 +96,16 @@ def test_Q_j_asymmetric_topology():
             self.end_time = base + dt.timedelta(minutes=60)
             self.rss = [0, 1.0, 0, 0]
 
+    all_vms = {"v0": FakeVM()}
+    node_to_vms = {0: ["v0"], 1: []}
+    node_to_machine = {0: "t", 1: "t"}
+    machine_sz = {"t": [0, 100.0, 0, 0]}
+
+    from octopus.data import to_arrays
+    trace_arrays = to_arrays((all_vms, node_to_vms, node_to_machine, {}, machine_sz))
+
     env = OctopusMemPoolEnv(
-        all_vms={"v0": FakeVM()},
-        node_to_vms={0: ["v0"], 1: []},
-        node_to_machine={0: "t", 1: "t"},
-        machine_sz={"t": [0, 100.0, 0, 0]},
+        trace_arrays=trace_arrays,
         M=M,
         seed=0,
         skip_hotfix=True,
@@ -308,17 +319,9 @@ def test_new_obs_global_features():
 # 4g — obs-sync: make_rl_alloc_cb produces identical obs to _get_obs()
 # ---------------------------------------------------------------------------
 
-class _FakeModel:
-    """Minimal stub with model.predict() returning a fixed zero action."""
-    def __init__(self, n_actions):
-        self._n = n_actions
-
-    def predict(self, obs, deterministic=True):
-        return np.zeros(self._n, dtype=np.float32), None
-
-
 def test_obs_sync_initial_step():
     """make_rl_alloc_cb must build the same obs as env._get_obs() at the first VM arrival."""
+    import torch
     from scripts.evaluate import make_rl_alloc_cb
 
     env, M = _make_minimal_env(reward_variant="A", lookahead_window=100)
@@ -341,15 +344,29 @@ def test_obs_sync_initial_step():
         "host_cxl_load": env.cur_host_cxl_load.copy(),
     }
 
+    # Mock model providing the policy interface expected by make_rl_alloc_cb.
+    # Captures the obs tensor passed to policy._predict without a real GPU model.
     captured_obs = [None]
+    n_actions = env.max_degree
 
-    class _CapturingModel:
-        def predict(self, obs, deterministic=True):
-            captured_obs[0] = obs.copy()
-            return np.zeros(env.max_degree, dtype=np.float32), None
+    class _MockPolicy:
+        _param = torch.zeros(1)
+
+        def set_training_mode(self, mode):
+            pass
+
+        def parameters(self):
+            return iter([self._param])
+
+        def _predict(self, obs_buf, deterministic=True):
+            captured_obs[0] = obs_buf[0].cpu().numpy().copy()
+            return torch.zeros(1, n_actions)
+
+    class _MockModel:
+        policy = _MockPolicy()
 
     cb = make_rl_alloc_cb(
-        _CapturingModel(),
+        _MockModel(),
         max_degree=env.max_degree,
         obs_variant="A",
         mhd_to_hosts=env.mhd_to_hosts,
