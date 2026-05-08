@@ -21,6 +21,10 @@ scripts/
   evaluate.py     — pooling_simulation() + allocation callbacks
   eval_rl.py      — Multi-trace RL checkpoint evaluation
   eval_baselines.py, plot_*.py, diagnose.py
+  experiments/    — One-off eval batch shell wrappers (cd to repo root internally)
+
+experiments/
+  <date>-<topic>/  — Captured consoles/logs from manual runs (see each README)
 
 tests/
   test_greedy_alloc.py        — greedy fast vs ref regression

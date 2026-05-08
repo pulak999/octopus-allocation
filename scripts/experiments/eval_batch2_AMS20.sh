@@ -3,7 +3,7 @@
 # Wave 1: R1/R2/R3 in parallel, wave 2: R4/R5/current in parallel.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 source venv/bin/activate
 
 TRACE="AMS20PrdApp19-tround"

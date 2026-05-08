@@ -1,0 +1,15 @@
+[batch2] Starting R4 on cuda:0 ...
+[batch2] Starting R5 on cuda:1 ...
+[batch2] Starting current on cuda:2 ...
+[batch2] All three launched (PIDs: R4=2088574  R5=2088575  current=2088576)
+[batch2] Logs: output/logs/ablation_{R4,R5,current}_v1.log
+[batch2] Waiting for all to finish ...
+[batch2] R4 FAILED (exit 143)
+[batch2] R5 FAILED (exit 143)
+[batch2] current FAILED (exit 143)
+[batch2] All ablations complete.
+[batch2] Evaluate all 6 runs:
+  python scripts/eval_rl.py \
+    --run-id ablation_R1_v1 ablation_R2_v1 ablation_R3_v1 \
+           ablation_R4_v1 ablation_R5_v1 ablation_current_v1 \
+    --n-iter 50

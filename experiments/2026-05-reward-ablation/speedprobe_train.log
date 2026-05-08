@@ -1,0 +1,11 @@
+[13:07:12] Config saved → output/checkpoints/speedprobe/config.json
+[13:07:12] Loading training trace: AMS20PrdApp19-tround.sqlite …
+[13:07:43] Topology: 96 hosts, 192 MPDs, max_degree=8
+[13:07:43] Reward variant: A — mhd_to_hosts/Q_j precomputed
+[13:12:49] SubprocVecEnv: 32 parallel environments
+[13:12:49] Loading eval trace: LON23PrdApp01-troundgrt5m.sqlite …
+Using cuda device
+[13:13:07] Training SAC [speedprobe] for 150,000 timesteps …
+Logging to output/logs/speedprobe/SAC_8
+/home/pm3371/gitrepos/rl/octopus-allocation/venv/lib/python3.10/site-packages/stable_baselines3/common/callbacks.py:418: UserWarning: Training and eval env are not of the same type<stable_baselines3.common.vec_env.subproc_vec_env.SubprocVecEnv object at 0x7fc948d6ffd0> != <stable_baselines3.common.vec_env.dummy_vec_env.DummyVecEnv object at 0x7fc6c6665690>
+  warnings.warn("Training and eval env are not of the same type" f"{self.training_env} != {self.eval_env}")

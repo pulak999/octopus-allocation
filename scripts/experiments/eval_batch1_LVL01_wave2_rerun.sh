@@ -3,7 +3,7 @@
 # current already finished (44 min); kill PIDs 2176850/2176851 before running.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 source venv/bin/activate
 
 TRACE="LVL01PrdApp05-troundgrt5m"

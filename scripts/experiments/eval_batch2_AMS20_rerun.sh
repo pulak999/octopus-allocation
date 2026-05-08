@@ -2,7 +2,7 @@
 # Re-eval R1/R2/R3/current on AMS20 sequentially — results were overwritten by the LVL01 batch.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 source venv/bin/activate
 
 TRACE="AMS20PrdApp19-tround"

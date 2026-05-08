@@ -1,0 +1,28 @@
+=== LVL01PrdApp05-troundgrt5m.sqlite (greedy) ===
+Loading trace: LVL01PrdApp05-troundgrt5m.sqlite …
+Topology: 96 hosts, 192 MPDs, max_degree=8
+
+  Greedy: iteration 0/50  Greedy: iteration 1/50  Greedy: iteration 2/50  Greedy: iteration 3/50  Greedy: iteration 4/50  Greedy: iteration 5/50  Greedy: iteration 6/50  Greedy: iteration 7/50  Greedy: iteration 8/50  Greedy: iteration 9/50  Greedy: iteration 10/50  Greedy: iteration 11/50  Greedy: iteration 12/50  Greedy: iteration 13/50  Greedy: iteration 14/50  Greedy: iteration 15/50  Greedy: iteration 16/50  Greedy: iteration 17/50  Greedy: iteration 18/50  Greedy: iteration 19/50  Greedy: iteration 20/50  Greedy: iteration 21/50  Greedy: iteration 22/50  Greedy: iteration 23/50  Greedy: iteration 24/50  Greedy: iteration 25/50  Greedy: iteration 26/50  Greedy: iteration 27/50  Greedy: iteration 28/50  Greedy: iteration 29/50  Greedy: iteration 30/50  Greedy: iteration 31/50  Greedy: iteration 32/50  Greedy: iteration 33/50  Greedy: iteration 34/50  Greedy: iteration 35/50  Greedy: iteration 36/50  Greedy: iteration 37/50  Greedy: iteration 38/50  Greedy: iteration 39/50  Greedy: iteration 40/50  Greedy: iteration 41/50  Greedy: iteration 42/50  Greedy: iteration 43/50  Greedy: iteration 44/50  Greedy: iteration 45/50  Greedy: iteration 46/50  Greedy: iteration 47/50  Greedy: iteration 48/50  Greedy: iteration 49/50
+  Greedy:
+    avg:  -0.0330
+    min:  -0.0710
+    max:  -0.0008
+    std:  0.0156
+
+Saved summary CSV: output/evals/heldout_greedy/greedy_LVL01PrdApp05-troundgrt5m_summary.csv
+Saved detail CSV:  output/evals/heldout_greedy/greedy_LVL01PrdApp05-troundgrt5m_detail.csv
+=== AMS20PrdApp19-tround.sqlite (greedy) ===
+Loading trace: AMS20PrdApp19-tround.sqlite …
+Topology: 96 hosts, 192 MPDs, max_degree=8
+
+  Greedy: iteration 0/50  Greedy: iteration 1/50  Greedy: iteration 2/50  Greedy: iteration 3/50  Greedy: iteration 4/50  Greedy: iteration 5/50  Greedy: iteration 6/50  Greedy: iteration 7/50  Greedy: iteration 8/50  Greedy: iteration 9/50  Greedy: iteration 10/50  Greedy: iteration 11/50  Greedy: iteration 12/50  Greedy: iteration 13/50  Greedy: iteration 14/50  Greedy: iteration 15/50  Greedy: iteration 16/50  Greedy: iteration 17/50  Greedy: iteration 18/50  Greedy: iteration 19/50  Greedy: iteration 20/50  Greedy: iteration 21/50  Greedy: iteration 22/50  Greedy: iteration 23/50  Greedy: iteration 24/50  Greedy: iteration 25/50  Greedy: iteration 26/50  Greedy: iteration 27/50  Greedy: iteration 28/50  Greedy: iteration 29/50  Greedy: iteration 30/50  Greedy: iteration 31/50  Greedy: iteration 32/50  Greedy: iteration 33/50  Greedy: iteration 34/50  Greedy: iteration 35/50  Greedy: iteration 36/50  Greedy: iteration 37/50  Greedy: iteration 38/50  Greedy: iteration 39/50  Greedy: iteration 40/50  Greedy: iteration 41/50  Greedy: iteration 42/50  Greedy: iteration 43/50  Greedy: iteration 44/50  Greedy: iteration 45/50  Greedy: iteration 46/50  Greedy: iteration 47/50  Greedy: iteration 48/50  Greedy: iteration 49/50
+  Greedy:
+    avg:  0.2785
+    min:  0.2437
+    max:  0.3186
+    std:  0.0171
+
+Saved summary CSV: output/evals/heldout_greedy/greedy_AMS20PrdApp19-tround_summary.csv
+Saved detail CSV:  output/evals/heldout_greedy/greedy_AMS20PrdApp19-tround_detail.csv
+
+Saved outputs to output/evals/heldout_greedy/
