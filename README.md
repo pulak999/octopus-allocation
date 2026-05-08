@@ -6,26 +6,23 @@ RL-based memory pooling for CXL (Compute Express Link) in cloud datacenters.
 
 ```
 octopus-allocation/
-├── scripts/           # Entry points
-│   ├── train.py       # Train SAC/PPO on memory-pooling env
-│   ├── evaluate.py    # Evaluate greedy vs RL policies
-│   ├── plot_demand.py # VM demand time-series for paper figures
-│   └── plot_memory_pooling_sweep.py
-├── octopus/           # Core library (env, baselines, topology, data)
+├── scripts/              # Entry points (train_rl.py, evaluate.py, eval_rl.py, …)
+│   └── experiments/      # Bash wrappers for multi-GPU eval batches (run from repo root)
+├── octopus/              # Core library (env, baselines, topology, data)
 ├── data/
-│   ├── traces/       # Azure VM trace pickles (.pkl)
-│   └── topologies/   # CXL topology CSVs
-├── output/            # Runtime artifacts (not in git)
-│   ├── checkpoints/   # Trained models
-│   ├── logs/          # Training logs
-│   └── plots/         # Generated figures
-├── doc/
-│   ├── v1/            # LaTeX report + slides
-│   ├── context/       # Reference PDFs and slides
-│   └── plans/         # Planning docs (plan-v1.md, plan-v2.md)
-├── notebooks/         # Jupyter notebooks
-└── Makefile          # venv, plots, pdf
+│   ├── traces/           # Azure VM trace pickles (large; gitignored contents)
+│   └── topologies/       # CXL topology CSVs
+├── output/               # Checkpoints, logs, eval CSVs (gitignored)
+├── experiments/          # Dated folders of captured consoles / notes from manual runs
+│   └── 2026-05-reward-ablation/
+├── docs/                 # LaTeX (slides, memos), plans/, new-results/
+├── tests/
+├── notebooks/
+├── ARCH.md               # Deeper module / data-flow notes
+└── Makefile              # venv, plots; legacy PDF target (see below)
 ```
+
+Large generated paths (`output/`, trace pickles under `data/traces/`, caches) are listed in `.gitignore`; avoid committing checkpoints or full trace corpora.
 
 ## Quick start
 
@@ -35,9 +32,18 @@ source venv/bin/activate
 pip install -e .
 python scripts/train.py
 python scripts/evaluate.py --policy greedy rl
-make plots   # Regenerate doc/v1/figs/
-make pdf     # Build LaTeX report
+make plots   # Runs scripts/plot_demand.py for demand figures
 ```
+
+**LaTeX:** Slide sources live under `docs/` (for example `docs/final/slides-final.tex`). Build with `latexmk` from the source directory, or use your usual TeX workflow. The root `Makefile` `pdf` target still assumes a legacy `doc/v1/v1.tex` layout; use `latexmk` directly if that directory is not present.
+
+## Experiments layout
+
+- **`experiments/<date>-<topic>/`** — Small text artifacts (consoles, scratch notes). Each folder may include a short `README.md` inventory.
+- **`scripts/experiments/*.sh`** — Multi-GPU eval batch scripts; they `cd` to the repo root and expect `venv/` there. Example: `bash scripts/experiments/eval_batch1_LVL01.sh`.
+- **`output/`** — Authoritative machine-generated results (logs, `output/rl_evals/`, checkpoints); keep local or sync out of band, not via git.
+
+Training/eval **Python** CLIs remain under `scripts/` (e.g. `train_rl.py`, `eval_rl.py`, `evaluate.py`). Reward ablations use `scripts/ablation_batch1.sh` / `scripts/ablation_batch2.sh` at the repo root.
 
 ## Training with a 7/2/1 trace split
 
