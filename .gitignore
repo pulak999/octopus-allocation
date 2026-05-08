@@ -20,6 +20,19 @@ docs/**/*.snm
 
 # Data (large trace files)
 data/traces/*
+data/traces-old/
+data/cache/
 
 # Output (checkpoints, logs, plots)
-# output/
+output/
+
+# Local/generated metadata
+.codebase-quizzer/
+octopus_allocation.egg-info/
+
+# Large model/checkpoint artifacts if created outside output/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.safetensors

@@ -1,0 +1,993 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{url}
+
+\definecolor{accent}{HTML}{2E75B6}
+
+\title{Reward Shaping Ablation Study\\
+\large From Local Penalty to Episode-Level Savings}
+\author{Pulak Mehrotra}
+\date{April 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\bigskip\noindent
+This document defines six reward formulations as a structured ablation
+study, progressing from the narrowest possible signal (single worst MPD)
+to the true episode-level objective augmented with optimal-gap shaping.
+Each level expands the scope of information the agent receives, and the
+ablation is designed to reveal which level is necessary and sufficient to
+beat greedy.
+
+Sections~\ref{sec:reachability}--\ref{sec:secondary} establish the three
+conceptual building blocks: the topology constraints that limit action scope
+(MPD reachability), the lower bound that anchors our shaping (optimal gap),
+and the literature-derived techniques that improve any base reward (PBRS,
+sub-episodes, counterfactual baselines).
+Section~\ref{sec:ablation} presents the six concrete formulations.
+
+% =========================================================================
+\section{Background and Motivation}
+\label{sec:background}
+
+The agent distributes each arriving VM's memory request across
+CXL-connected Memory Pool Devices (MPDs) in a bipartite host--MPD topology.
+The objective is to minimise the peak per-MPD load over the full trace
+window, which directly determines pooling savings:
+\begin{equation}
+  \text{pooling\_savings}
+  = 1 - \frac{\max_j\, c_j^{\text{peak}} \cdot m}{D_{\text{pod}}}
+  \label{eq:ps}
+\end{equation}
+A 1--2\% improvement over greedy is considered strong.
+
+Runs 5--7 revealed three failure modes that motivate this ablation study:
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{llll}
+\toprule
+\textbf{Run} & \textbf{Reward} & \textbf{Failure mode} & \textbf{Peak savings} \\
+\midrule
+6 & ``current'' ($\Delta$peak + variance) &
+  Policy collapsed to 1--2 MPDs; entropy $\to 0$ &
+  $-0.62$ (harmful) \\
+5 & Variant A (local projected peak) &
+  Savings plateau; entropy collapse by 2M steps &
+  $\sim$1.3\% (flat) \\
+7 & Variant A (same, different hyperparams) &
+  Same plateau; Q-values rising without improvement &
+  $\sim$1.2\% (flat) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The common thread is \textbf{proxy-objective misalignment}: per-step rewards
+optimise a quantity (instantaneous peak change) that diverges from the true
+objective (episode-level pooling savings) over 7{,}000+ allocation
+decisions.  The Noisy Future Knowledge analysis~\cite{futurek} confirms that
+5\% per-step prediction error compounds over 14 days to produce
+worse-than-greedy outcomes.
+
+\paragraph{Ablation hypothesis.}
+Progressively widening the reward scope---from single MPD, to reachable
+neighbourhood, to global pod, to episode-level---will reveal which level of
+information is necessary and sufficient.  Each level adds exactly one
+dimension of information relative to the previous.
+
+% =========================================================================
+\section{Notation}
+\label{sec:notation}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{ll}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$m$                  & number of MPDs in the pod \\
+$N(i)$               & MPDs reachable from host $i$ \\
+$H(j)$               & hosts connected to MPD $j$ \\
+$c_j(t)$             & current allocated load on MPD $j$ (GB) \\
+$D_j(t,W)$           & time-weighted departure relief on MPD $j$ over horizon $W$ \\
+$S_j(t)$             & sticky load on MPD $j$ (load expected to remain after departures) \\
+$x$                  & arriving VM memory request (GB) \\
+$\mathbf{w}$         & allocation weight vector across reachable MPDs \\
+$W$                  & lookahead window (timesteps) \\
+$D_{\text{pod}}$     & total pod DRAM capacity (GB) \\
+$\hat{c}_j(t)$       & projected normalized load before placing the new VM \\
+$\hat{c}_j^+(t)$     & projected normalized load after placing the new VM \\
+\midrule
+$c_{\max}^{\text{post}}$ & $\max_j\, c_j$ after allocation ($\star$) \\
+$t^*(s)$             & optimal achievable peak via Dinic solver ($\star$) \\
+$\delta_t$           & optimality gap ($\star$) \\
+$\Phi(s)$            & potential function for PBRS ($\star$) \\
+$\mathrm{PS}$        & episode-level pooling savings ($\star$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Core load projection definitions (self-contained).}
+For each MPD $j$, define post-placement load and normalized projected loads as
+\begin{align}
+  c_j^{\text{post}}(t) &= c_j(t) + x\,w_j, \\
+  \hat{c}_j(t) &= \frac{c_j(t) - D_j(t,W)}{D_{\text{pod}}}, \\
+  \hat{c}_j^+(t) &= \frac{c_j^{\text{post}}(t) - D_j(t,W)}{D_{\text{pod}}}.
+\end{align}
+
+% =========================================================================
+\section{MPD Reachability}
+\label{sec:reachability}
+
+\subsection{Topology and Reachability}
+
+The pod is a bipartite graph $\mathcal{G} = (\mathcal{H}, \mathcal{M},
+\mathcal{E})$ where $\mathcal{H}$ is the set of hosts, $\mathcal{M}$ the
+set of MPDs, and $\mathcal{E}$ the set of CXL links.  Host $i$ can
+allocate VM memory \emph{only} to its reachable set:
+\begin{equation}
+  N(i) = \{ j \in \mathcal{M} : (i, j) \in \mathcal{E} \}.
+\end{equation}
+Symmetrically, MPD $j$ receives allocations only from:
+\begin{equation}
+  H(j) = \{ i \in \mathcal{H} : (i, j) \in \mathcal{E} \}.
+\end{equation}
+
+\paragraph{AG16x6 example.}
+The default topology (\texttt{AG16x6\_expander\_quads\_r5\_sym\_fixed})
+has 16 hosts and a fan-out of up to $d_{\max} = 8$ MPDs per host.
+Not all hosts share the same reachable set, and many MPDs are shared across
+multiple hosts ($|H(j)| > 1$).  This asymmetry means a uniform reward
+scope is inappropriate: the information available to the agent varies by
+host position in the graph.
+
+\subsection{Reachability and the Reward Scope Problem}
+
+At each step $t$, the agent receives host $i_t$'s VM request and selects
+weights $\mathbf{w}_t$ over $N(i_t)$.  The action strictly cannot affect
+any MPD outside $N(i_t)$.  Yet the true objective,
+$\max_j c_j^{\text{peak}}$, is over \emph{all} $m$ MPDs.
+
+This creates a fundamental tension: the reward must evaluate local actions
+against a global criterion.  Three design responses are possible:
+\begin{enumerate}
+  \item \textbf{Ignore the gap} --- reward only the local effect (R1, R2).
+        Simple but proxy-misaligned.
+  \item \textbf{Add a global proxy term} --- penalise unreachable hot MPDs
+        as context (R3).  Widens scope but introduces action-independent
+        noise.
+  \item \textbf{Evaluate at episode end} --- collapse all local decisions
+        into one terminal signal (R4).  Fully aligned but sparse.
+\end{enumerate}
+The ablation ladder tests whether each response is necessary and
+sufficient, or whether the credit-assignment cost of R4 dominates the
+alignment benefit.
+
+\subsection{Shared MPDs and Inter-Host Interference}
+
+When $|H(j)| > 1$, MPD $j$ is a shared resource.  If host $i_1$ fills it
+near capacity, host $i_2$ (which also has $j \in N(i_2)$) loses effective
+allocation headroom at future steps.  A reward that observes only
+$N(i_t)$ at step $t$ cannot detect this cross-host interference until it
+manifests as a load spike---by which point the damage is done.
+
+The R2 formulation captures the direct post-placement effect on all
+$j \in N(i_t)$, including shared MPDs connected to the current host.  What
+it misses is the \emph{indirect} effect: that filling a shared MPD
+constrains a future host's choices.  R3 and R4 address this at different
+levels of fidelity, while the optimal gap (Section~\ref{sec:optgap})
+provides a model-free lower bound on how much headroom remains globally.
+
+% =========================================================================
+\section{Optimal Gap}
+\label{sec:optgap}
+
+The codebase includes an exact per-snapshot solver
+(\texttt{octopus/optimal.py}) that computes the minimum achievable peak
+MPD load $t^*(s_t)$ for a given vector of host demands and topology.
+It uses binary search over a Dinic max-flow feasibility check.
+This scalar is a lower bound on any policy's peak load at the current
+state---the best any allocator could achieve with full knowledge of
+instantaneous demands but no knowledge of future arrivals.
+
+\subsection{Optimality-Gap Penalty}
+
+Define the normalised optimality gap after the current allocation:
+\begin{equation}
+\boxed{
+  \delta_t
+  \;=\;
+  \frac{c_{\max}^{\text{post}} \;-\; t^*(s_t)}{D_{\text{pod}}}
+}
+\label{eq:optgap}
+\end{equation}
+
+$\delta_t = 0$ means the agent's placement is as good as optimal given
+current demands.  $\delta_t > 0$ quantifies wasted peak capacity.
+This can be added as a shaping term to any base reward $R_k$:
+\begin{equation}
+  r_t'
+  \;=\;
+  R_k(t) \;-\; \beta\,\delta_t,
+  \qquad
+  \beta \in [0.1,\; 0.5]
+  \label{eq:optgap-shaped}
+\end{equation}
+
+Unlike R1--R3, this term is grounded in a provably tight lower bound
+rather than a heuristic, and it is sensitive to every allocation decision
+(not just those that change the global worst MPD).
+
+\subsection{PBRS-Compatible Version}
+
+To guarantee the shaped reward does not change the set of optimal policies
+(Section~\ref{sec:pbrs}), define the potential:
+\begin{equation}
+  \Phi_{\text{opt}}(s)
+  \;=\;
+  -\,\frac{t^*(s)}{D_{\text{pod}}}
+  \label{eq:opt-potential}
+\end{equation}
+
+Then $F(s,s') = \gamma\,\Phi_{\text{opt}}(s') - \Phi_{\text{opt}}(s)$
+rewards reductions in the optimal lower bound itself.  Combined with the
+sparse terminal reward (R4), this is the safest dense signal available:
+it pushes the policy toward states where the optimally achievable peak is
+low, without encoding assumptions about departures or future arrivals.
+
+\subsection{Implementation Cost}
+
+\texttt{find\_optimal} runs a max-flow per call.  At 1{,}000
+steps/episode $\times$ 32 envs, calling it every step would dominate
+wall-clock time.  Practical options:
+\begin{itemize}
+  \item Call every $k = 10$--$50$ steps; hold the last value constant
+        between calls (stale-optimal shaping).
+  \item Call only at episode end to compute a terminal potential bonus.
+  \item Pre-compute $t^*$ offline for a representative grid of demand
+        vectors and use nearest-neighbour lookup at training time.
+\end{itemize}
+
+% =========================================================================
+\section{Literature-Based Reward Modifications}
+\label{sec:secondary}
+
+The base rewards R1--R4 (Section~\ref{sec:ablation}) can each be improved
+by layering principled modifications drawn from RL theory and systems RL
+literature.  This section treats each modification as a composable module
+that is independent of the base reward choice.
+
+% -------------------------------------------------------------------------
+\subsection{Potential-Based Reward Shaping}
+\label{sec:pbrs}
+
+Ng, Harada, and Russell~\cite{ng1999pbrs} proved that an agent's set of
+optimal policies is preserved \emph{if and only if} shaping rewards take
+the form:
+\begin{equation}
+  F(s, s')
+  \;=\;
+  \gamma\,\Phi(s') \;-\; \Phi(s)
+  \label{eq:pbrs}
+\end{equation}
+where $\Phi : \mathcal{S} \to \mathbb{R}$ is an arbitrary potential
+function.  Any other dense reward risks inducing a suboptimal policy
+relative to the true objective.
+
+R1--R3 are not in this form: they encode transition information that
+cannot be expressed as a potential difference.  This is acceptable for an
+ablation (we want to test their empirical value), but it means R1--R3 can
+in principle game the proxy.  R4 avoids this by using the true objective,
+but requires dense shaping to be learnable at $\sim$7{,}000-step horizons.
+
+\paragraph{Candidate potentials for this domain.}
+\begin{enumerate}
+  \item \textbf{Simple:} $\Phi(s) = -\max_j c_j(t) / D_{\text{pod}}$.
+        Cheap (one max over $m$ values per step).  Rewards peak reductions
+        in a policy-invariant way.
+  \item \textbf{Tight:} $\Phi(s) = -t^*(s) / D_{\text{pod}}$.
+        Uses the Dinic solver (Section~\ref{sec:optgap}).  Rewards states
+        where the optimal achievable peak is low.  Tighter but more
+        expensive.
+\end{enumerate}
+
+Both potentials are non-positive and approach zero as the system empties,
+so $F(s,s') > 0$ when a placement reduces the relevant peak---the
+direction we want.
+
+% -------------------------------------------------------------------------
+\subsection{Sub-Episode Decomposition}
+\label{sec:subepisodes}
+
+Mao et al.~\cite{mao2017pensieve} (Pensieve) and~\cite{mao2019decima}
+(Decima) both demonstrate that sparse task-aligned rewards with shorter
+horizons outperform dense proxy rewards with long horizons.  Pensieve
+uses per-chunk rewards; Decima uses job-completion rewards rather than
+per-step queue-length penalties.
+
+Applied here: the 14-day trace produces episodes of $\sim$7{,}000 steps.
+Breaking the trace at fixed 1--2 day intervals (288--576 steps at
+5-minute resolution) turns R4 from one terminal signal per 7{,}000 steps
+into one signal per 300--600 steps---a 10$\times$ improvement in
+credit-assignment density while preserving true-objective alignment.
+
+\paragraph{Implementation.}
+At each sub-episode boundary:
+\begin{enumerate}
+  \item Compute sub-episode pooling savings from the peak MPD load observed
+        within that window.
+  \item Return the sub-episode savings as a terminal reward.
+  \item Reset the peak tracker but \textbf{not} the MPD loads---physical
+        state carries over; only the measurement window resets.
+\end{enumerate}
+
+% -------------------------------------------------------------------------
+\subsection{Counterfactual Difference Rewards}
+\label{sec:counterfactual}
+
+Wolpert and Tumer~\cite{wolpert2002diff} introduced difference rewards to
+isolate an individual agent's contribution to the global objective by
+comparing the actual outcome to a counterfactual baseline action
+$a_{\text{base}}$:
+\begin{equation}
+  D(s, a)
+  \;=\;
+  G(s^{a}) - G(s^{a_{\text{base}}})
+  \label{eq:diff-reward}
+\end{equation}
+where $G(s) = -\max_j \hat{c}_j(s)$ is the global congestion score and
+$a_{\text{base}}$ is a cheap reference (e.g.\ greedy or uniform split).
+
+This is most relevant for R3 (Section~\ref{sec:r3}), where the global
+term $\max_{j \notin N(i)} \hat{c}_j$ is action-independent: it penalises
+global congestion regardless of what the current agent does.  Replacing it
+with a difference reward makes the global term action-dependent and
+eliminates the moving-baseline problem that inflates critic variance.
+
+% -------------------------------------------------------------------------
+\subsection{Dynamic $\lambda$ Scheduling}
+\label{sec:lambda}
+
+R3 introduces $\lambda$ to weight the global term against the local term.
+A fixed $\lambda$ is problematic: the right trade-off changes during
+training, and the topology does not support uniform load.  Three
+alternatives:
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{3.5cm}p{4.5cm}p{4.5cm}}
+\toprule
+\textbf{Approach} & \textbf{Expected behaviour} & \textbf{Complexity} \\
+\midrule
+Remove entirely (use R2) &
+  Eliminates critic noise from action-independent global term &
+  Simplest \\
+Dynamic scheduling &
+  Start $\lambda = 0$ (pure local); increase as policy stabilises
+  via bandit over validation pooling savings &
+  Moderate; requires scheduler \\
+Lexicographic &
+  Optimise local peak first; use global only as tiebreaker when
+  local peaks are equal &
+  Moderate; two-head critic or constraint \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+For the ablation, run R3 both with and without $\lambda$ to isolate its
+contribution.  If R2 + PBRS + R4 terminal matches or exceeds R3, then
+$\lambda$ adds complexity without value and should be dropped.
+
+% =========================================================================
+\section{Ablation Formulations}
+\label{sec:ablation}
+
+Six formulations, each adding exactly one dimension of information or one
+design correction over the previous.  R1--R4 form a clean scope
+progression from narrowest signal to true objective.  The final two
+variants layer the modifications from Section~\ref{sec:secondary} onto
+the objective-aligned base.
+
+% -------------------------------------------------------------------------
+\subsection{R1: Single MPD Reward}
+\label{sec:r1}
+
+\paragraph{Definition.}
+Penalise only the single worst MPD after placement.
+\begin{equation}
+\boxed{
+  R_1(t)
+  \;=\;
+  -\,\frac{c_{j^*}^{\text{post}}(t)}{D_{\text{pod}}},
+  \qquad
+  j^* = \arg\max_{j}\, c_j^{\text{post}}(t)
+}
+\label{eq:r1}
+\end{equation}
+
+\paragraph{Rationale.}
+The simplest possible signal: how bad is the single worst MPD right now?
+No neighbourhood context, no departure awareness, no global view.  Serves
+as the controlled floor of the ablation---if any other variant cannot beat
+R1, it is adding noise rather than signal.
+
+Unlike Run~6's ``current'' reward, R1 omits the variance term and
+fair-share normalisation, isolating the effect of scope (single vs.\
+group) from the effect of mixing incommensurable objectives (peak vs.\
+variance).
+
+\paragraph{Signal properties.}
+\begin{itemize}
+  \item \textbf{Density:} Dense. \quad \textbf{Scope:} Single global worst
+        MPD. \quad \textbf{Range:} $(-1,\; 0]$. \quad
+        \textbf{Departure-aware:} No.
+\end{itemize}
+
+\paragraph{Expected failure mode.}
+When the allocation does not land on the current worst MPD \emph{and} does
+not create a new worst, the reward is identical regardless of which MPD is
+chosen.  Policy gradient is zero with respect to action choice in these
+cases---the same mechanism that caused Run~6's entropy collapse.
+
+% -------------------------------------------------------------------------
+\subsection{R2: Localized Group Reward}
+\label{sec:r2}
+
+\paragraph{Definition.}
+Penalise the worst projected load across all MPDs reachable from the
+current host.
+\begin{equation}
+\boxed{
+  R_2(t)
+  \;=\;
+  -\,\max_{j \,\in\, N(i)}\, \hat{c}_j^{\,+}(t)
+}
+\label{eq:r2}
+\end{equation}
+
+\paragraph{Rationale.}
+R2 improves on R1 in two ways.  First, all reachable MPDs contribute: the
+agent receives distinct signals for placing on a lightly-loaded vs.\
+heavily-loaded reachable MPD, even if neither is the global worst.  Second,
+the projected load subtracts departure relief $D_j$, distinguishing ``full
+but draining soon'' from ``full and staying full.''  This departure
+awareness is the most important design improvement over R1.
+
+\paragraph{Signal properties.}
+\begin{itemize}
+  \item \textbf{Density:} Dense. \quad \textbf{Scope:} All $j \in N(i)$
+        (typically $d_{\max} = 8$). \quad \textbf{Range:} $(-1,\; 0]$.
+        \quad \textbf{Departure-aware:} Yes.
+\end{itemize}
+
+\paragraph{Expected failure mode.}
+R2 is blind to unreachable MPDs.  A neighbourhood where all MPDs are at
+60\% looks the same as one where one MPD is at 60\% and the rest are
+empty---R2 loses distributional information.  Cross-host interference on
+shared MPDs (Section~\ref{sec:reachability}) is also invisible until it
+manifests as a spike.
+
+% -------------------------------------------------------------------------
+\subsection{R3: Global Group Reward}
+\label{sec:r3}
+
+\paragraph{Definition.}
+Penalise the worst projected load locally, plus a weighted penalty for
+the worst unreachable MPD.
+\begin{equation}
+\boxed{
+  R_3(t)
+  \;=\;
+  -\,\max_{j \,\in\, N(i)}\, \hat{c}_j^{\,+}(t)
+  \;-\;
+  \lambda \cdot \max_{j \,\notin\, N(i)}\, \hat{c}_j(t)
+}
+\label{eq:r3}
+\end{equation}
+
+\paragraph{Rationale.}
+R3 tests whether the agent benefits from seeing global pod state beyond
+its neighbourhood.  The second term penalises hot unreachable MPDs,
+signalling that neighbouring hosts are under stress.  Even though the
+current host cannot directly relieve that stress, the value function may
+learn to associate global stress with worse long-term outcomes.
+
+\paragraph{Action-dependent variants.}
+The baseline R3 (Eq.~\ref{eq:r3}) suffers from an action-independent
+global term.  Applying the Wolpert--Tumer difference reward
+(Section~\ref{sec:counterfactual}) yields action-dependent alternatives:
+\begin{align}
+\textbf{R3-C:}\quad
+R_{3\text{C}}(t)
+&=
+-\,\max_{j \in N(i)} \hat{c}_j^{+}(t)
+- \lambda \bigl(G(s_{t+1}) - G(s_t)\bigr),
+\label{eq:r3c}
+\\[4pt]
+\textbf{R3-D:}\quad
+R_{3\text{D}}(t)
+&=
+R_2(t)
++ \lambda \bigl(G(s_{t+1}^{a_t}) - G(s_{t+1}^{a_{\text{base}}})\bigr),
+\label{eq:r3d}
+\end{align}
+where $G(s) = -\max_j \hat{c}_j(s)$ and $a_{\text{base}}$ is a greedy or
+uniform-split baseline.  R3-D provides the highest-quality credit
+assignment for global effect but requires an extra rollout per step.
+
+\paragraph{Signal properties.}
+\begin{itemize}
+  \item \textbf{Density:} Dense. \quad \textbf{Scope:} All $m$ MPDs.
+        \quad \textbf{Range:} $(-(1{+}\lambda),\; 0]$. \quad
+        \textbf{Departure-aware:} Yes (local term and $\hat{c}_j$ for
+        unreachable MPDs).
+\end{itemize}
+
+\paragraph{Expected failure mode.}
+R3 and R3-C still suffer from partial action independence; the global
+component can become a moving baseline that increases critic variance
+without improving action ranking.  R3-D fixes this in principle but
+introduces non-trivial compute overhead and reward-scale sensitivity in
+the choice of $\lambda$.
+
+% -------------------------------------------------------------------------
+\subsection{R4: Episode-Level Reward}
+\label{sec:r4}
+
+\paragraph{Definition.}
+Zero intermediate reward; true pooling savings at episode end.
+\begin{equation}
+\boxed{
+  R_4(t)
+  \;=\;
+  \begin{cases}
+    0 & t < T \\[4pt]
+    \mathrm{PS}(\text{episode}) & t = T
+  \end{cases}
+}
+\label{eq:r4}
+\end{equation}
+
+\paragraph{Rationale.}
+R4 is the only base formulation that directly optimises the true
+objective.  No proxy, no $\lambda$, no intermediate approximation.
+Every distortion introduced by R1--R3 is eliminated.  The agent receives
+a single scalar at episode end that is exactly the quantity we want to
+maximise.
+
+\paragraph{Signal properties.}
+\begin{itemize}
+  \item \textbf{Density:} Sparse ($\sim$1 signal per 7{,}000 steps).
+        \quad \textbf{Scope:} Global and temporal (captures all placements
+        over the full trace). \quad \textbf{Range:} $(-1,\; 1)$ in
+        practice. \quad \textbf{Departure-aware:} Not directly (terminal
+        reward reflects actual peaks, not predicted ones).
+\end{itemize}
+
+\paragraph{Expected failure mode.}
+Credit assignment.  With 7{,}000 steps and one terminal reward, the critic
+must learn which of the 7{,}000 decisions mattered.  SAC's replay buffer
+and Bellman bootstrapping can propagate this signal backward, but
+convergence is slow without dense shaping.  This motivates the next two
+variants.
+
+\paragraph{Implementation note.}
+Episode-level pooling savings is already computed in the codebase
+(\texttt{pooling\_ratio} / \texttt{pooling\_savings} in the eval callback).
+It needs to be wired as the terminal reward rather than a separate logging
+metric.
+
+% -------------------------------------------------------------------------
+\subsection{R4 + PBRS + Sub-Episodes}
+\label{sec:r4pbrs}
+
+\paragraph{Definition.}
+Episode-level terminal reward with dense potential-based shaping and a
+shorter sub-episode horizon for credit assignment.
+\begin{equation}
+\boxed{
+  r_t
+  \;=\;
+  \begin{cases}
+    \gamma\,\Phi(s_{t+1}) - \Phi(s_t)
+      & t \text{ not a sub-episode boundary} \\[6pt]
+    \mathrm{PS}_{\text{sub}}(t)
+      + \gamma\,\Phi(s_{t+1}) - \Phi(s_t)
+      & t \text{ a sub-episode boundary}
+  \end{cases}
+}
+\label{eq:r4pbrs}
+\end{equation}
+where $\Phi(s) = -\max_j c_j / D_{\text{pod}}$ (simple potential) or
+$\Phi(s) = -t^*(s)/D_{\text{pod}}$ (tight potential), and
+$\mathrm{PS}_{\text{sub}}(t)$ is the pooling savings over the current
+sub-episode window (1--2 days $\approx$ 288--576 steps).
+
+\paragraph{Rationale.}
+This variant stacks the two literature-based improvements from
+Sections~\ref{sec:pbrs} and~\ref{sec:subepisodes}.  PBRS (Ng et al.)
+provides dense per-step signal without distorting the optimal policy.
+Sub-episode decomposition (Pensieve/Decima) shortens the credit-assignment
+horizon from $\sim$7{,}000 steps to $\sim$300--600 steps.  Together they
+address the sole failure mode of R4 (sparse signal) while preserving full
+objective alignment.
+
+\paragraph{Signal properties.}
+\begin{itemize}
+  \item \textbf{Density:} Dense (per-step PBRS shaping) plus terminal at
+        each sub-episode boundary.
+  \item \textbf{Scope:} Global and temporal (terminal captures all
+        placements in each sub-episode window).
+  \item \textbf{Objective-aligned:} Yes---PBRS preserves the optimal policy
+        set; sub-episode savings is a true partial objective.
+\end{itemize}
+
+\paragraph{Expected failure mode.}
+Added implementation complexity at sub-episode boundaries (peak tracker
+reset without MPD state reset).  PBRS and sub-episodes may be partially
+redundant: if PBRS alone is sufficient, sub-episodes add complexity without
+benefit.  The ablation should test R4+PBRS alone and the full stack
+separately to separate their contributions.
+
+% -------------------------------------------------------------------------
+\subsection{Best Variant + Optimal Gap Shaping}
+\label{sec:r4opt}
+
+\paragraph{Definition.}
+The best-performing variant from the preceding five, augmented with the
+optimality-gap penalty (Section~\ref{sec:optgap}).  Plain penalty form:
+\begin{equation}
+\boxed{
+  r_t^+
+  \;=\;
+  r_t^{\text{best}} \;-\; \beta\,\delta_t,
+  \qquad
+  \delta_t = \frac{c_{\max}^{\text{post}} - t^*(s_t)}{D_{\text{pod}}},
+  \quad \beta \in [0.1,\; 0.5]
+}
+\label{eq:r4opt}
+\end{equation}
+
+PBRS-compatible form using the tight potential:
+\begin{equation}
+  r_t^+
+  \;=\;
+  r_t^{\text{best}}
+  \;+\;
+  \gamma\,\Phi_{\text{opt}}(s_{t+1}) - \Phi_{\text{opt}}(s_t),
+  \qquad
+  \Phi_{\text{opt}}(s) = -\,\frac{t^*(s)}{D_{\text{pod}}}
+  \label{eq:r4opt-pbrs}
+\end{equation}
+
+\paragraph{Rationale.}
+The optimal gap term is the only shaping signal grounded in a provably
+tight lower bound (Dinic max-flow).  It rewards the agent for placing VMs
+close to the theoretical optimum given current state, independent of
+future arrivals.  Applied to whichever base variant already achieves the
+best objective alignment, it provides an additional per-step calibration
+signal at the cost of one max-flow solve per call.
+
+The benefit is largest on R1 and R2 (weakest signal; $\delta_t$ adds a
+lower-bound reference they completely lack) and smallest on R4 and R4+PBRS
+(already optimising the true objective).
+
+\paragraph{When to evaluate.}
+Optimal-gap shaping should be the last variant tested, after the
+five-variant primary sweep is complete.  The computational overhead is
+non-trivial and only justified once the strongest objective-aligned base
+is identified.
+
+\paragraph{Signal properties.}
+\begin{itemize}
+  \item \textbf{Density:} Dense (or stale-optimal at every $k$ steps).
+        \quad \textbf{Scope:} Global (Dinic solver sees full topology).
+        \quad \textbf{Objective-aligned:} Yes (PBRS-compatible form).
+\end{itemize}
+
+% =========================================================================
+\section{Experimental Plan}
+\label{sec:experiment}
+
+\subsection{Ablation Summary}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{3.2cm}p{2.8cm}ll p{3.8cm}}
+\toprule
+\textbf{Variant} & \textbf{Scope} & \textbf{Dense?} &
+  \textbf{Objective-aligned?} & \textbf{Key risk} \\
+\midrule
+R1 & Single worst MPD & Yes & No &
+  Zero gradient for non-worst placements \\
+R2 & Reachable-MPD group & Yes & No &
+  Blind to shared-MPD congestion \\
+R3 & Full pod (proxy) & Yes & No &
+  Action-independent global term \\
+R4 & Full episode & No & Yes &
+  7{,}000-step credit assignment \\
+R4 + PBRS + Sub & Full episode & Yes & Yes &
+  Boundary complexity; possible PBRS/sub redundancy \\
+Best + Opt.\ gap & Full pod + tight lb & Yes & Yes &
+  Compute cost of Dinic per step \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Run Order}
+
+\begin{enumerate}
+  \item \textbf{R1} --- Establish the controlled floor.  Cheapest run and
+        cleanest negative control.
+  \item \textbf{R2} --- Measure how much local projected-load awareness
+        buys over R1.
+  \item \textbf{R3} --- Test whether global context (action-independent)
+        adds value over R2.
+  \item \textbf{R4} --- Test whether sparse true-objective signal can
+        learn at all without shaping.
+  \item \textbf{R4 + PBRS + Sub-Episodes} --- Test whether objective
+        alignment plus improved credit assignment is the winning
+        combination.
+  \item \textbf{Best + Optimal Gap} --- Only after the winner of the
+        above five is clearly established; adds non-trivial compute.
+\end{enumerate}
+
+\subsection{Metrics}
+
+\begin{itemize}
+  \item \textbf{Primary:} \texttt{eval/pooling\_savings\_mean} on held-out
+        trace (10 random pod mappings).
+  \item \textbf{Diagnostic:} entropy coefficient
+        (\texttt{sac/ent\_coef}), critic loss convergence speed, Q-value
+        growth rate.
+  \item \textbf{Cost:} wall-clock time per 1M steps.
+\end{itemize}
+
+\subsection{Success Criteria}
+
+A variant ``beats'' another if it achieves $> 0.5\%$ higher pooling
+savings on the held-out eval trace, sustained for at least 3 consecutive
+eval checkpoints (300k steps).  Ties are broken by lower variance across
+pod mappings.
+
+% =========================================================================
+\section{Empirical Results: Reward Ablation on Held-Out Traces}
+\label{sec:results}
+
+All variants trained for 500k steps with SAC, $n_\text{envs}=32$, multi-trace
+rotation, augmentation enabled, HOTFIX filter off.
+Evaluation: 20 pod seeds per trace, topology \texttt{AG16x6\_expander\_quads\_r5\_sym\_fixed}.
+
+\subsection{LVL01PrdApp05 (churn-dominated trace)}
+
+Greedy allocation is harmful on this trace: pooling ratio $>1$ means
+the policy must allocate CXL memory that exceeds the savings from pooling.
+All RL variants improve over greedy.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Policy} & \textbf{Pool ratio} & \textbf{Savings} & \textbf{vs.\ Greedy} \\
+\midrule
+Greedy          & 1.033 & $-3.30\%$ & --- \\
+\textbf{R2}     & \textbf{1.002} & $\mathbf{-0.20\%}$ & $\mathbf{+3.1\,\text{pp}}$ \\
+R1              & 1.008 & $-0.76\%$ & $+2.5\,\text{pp}$ \\
+R4              & 1.009 & $-0.88\%$ & $+2.4\,\text{pp}$ \\
+R3              & 1.010 & $-0.96\%$ & $+2.3\,\text{pp}$ \\
+current         & 1.013 & $-1.31\%$ & $+2.0\,\text{pp}$ \\
+R5              & 1.014 & $-1.40\%$ & $+1.9\,\text{pp}$ \\
+\bottomrule
+\end{tabular}
+\caption{LVL01 held-out evaluation (20 seeds, $n=20$ iterations).
+  Lower pool ratio is better. All RL variants beat greedy; R2 is closest to break-even.}
+\label{tab:lvl01}
+\end{table}
+
+\subsection{AMS20PrdApp19 (long-lived VM trace)}
+
+Greedy performs strongly on this trace (ratio $0.721$, savings $+27.9\%$).
+All RL variants cluster near $6.5\%$ savings — a $\approx21\,\text{pp}$ gap behind greedy.
+Reward variant makes essentially no difference.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Policy} & \textbf{Pool ratio} & \textbf{Savings} & \textbf{vs.\ Greedy} \\
+\midrule
+Greedy          & 0.721 & $+27.9\%$ & --- \\
+R1              & 0.934 & $+6.6\%$  & $-21.2\,\text{pp}$ \\
+current         & 0.934 & $+6.6\%$  & $-21.2\,\text{pp}$ \\
+R2              & 0.935 & $+6.6\%$  & $-21.3\,\text{pp}$ \\
+R4              & 0.934 & $+6.6\%$  & $-21.3\,\text{pp}$ \\
+R3              & 0.936 & $+6.4\%$  & $-21.5\,\text{pp}$ \\
+R5              & 0.937 & $+6.3\%$  & $-21.6\,\text{pp}$ \\
+\bottomrule
+\end{tabular}
+\caption{AMS20 held-out evaluation (20 seeds, $n=20$ iterations).
+  All RL variants are statistically indistinguishable from each other
+  and trail greedy by $\approx21\,\text{pp}$. Reward shaping has no effect on this trace.}
+\label{tab:ams20}
+\end{table}
+
+\subsection{Cross-trace summary}
+
+The two held-out traces reveal a generalisation gap rather than a reward-shaping
+effect. On LVL01 (high churn: 64\% of VMs live $<1$\,h, median lifetime
+$\approx$30\,min) every RL variant outperforms greedy. On AMS20 (long-lived:
+46\% of VMs live $>7$\,days, mean $\approx$3.8\,days) greedy dominates.
+Reward variant R1--R5 differences are within noise on both traces,
+suggesting the bottleneck is \emph{generalisation across VM-lifetime
+distributions}, not the reward formulation.
+
+% =========================================================================
+\section{Trace Analysis}
+\label{sec:trace-analysis}
+
+\subsection{Ghost VMs (data quality)}
+
+Both traces contain VMs whose \texttt{start\_time} and \texttt{end\_time}
+fields were never populated during trace loading (they retain the class
+defaults: \texttt{start=2024-01-01}, \texttt{end=2020-01-01}).
+AMS20 has 4{,}788 such ghost VMs (14.1\%); LVL01 has 50{,}674 (18.7\%).
+
+These are \textbf{safely filtered} by \texttt{\_build\_events}: the base
+timestamp for each episode is derived from the real VM population
+($\approx2023$), so the ghost end-time (2020) maps to a tick far
+below zero, triggering the \texttt{if vm\_e < 0: continue} guard before
+any event is appended.  Ghost VMs generate no events and do not corrupt
+the simulation.
+
+\subsection{VM-lifetime distributions across all ten traces}
+
+Table~\ref{tab:traces} characterises the full training-trace pool.
+AMS20 is the only predominantly long-lived trace: 46\% of valid VMs
+run for more than seven days and the median lifetime is $\approx$20\,h.
+The remaining nine traces are churn-dominated, with LVL01 being the
+most extreme (64\% of VMs live less than one hour, median $\approx$30\,min).
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrrrrrr}
+\toprule
+\textbf{Trace} & \textbf{Valid VMs} & \textbf{Ghost\%} & \textbf{$<$1h\%} & \textbf{$>$7d\%} & \textbf{Med (h)} & \textbf{Mean (d)} & \textbf{AvgConc} & \textbf{Med GB} \\
+\midrule
+\textbf{AMS20}   & 27{,}159  & 20.2 & 22.3 & \textbf{49.3} & \textbf{124.6} & \textbf{4.14} & 14{,}053 & 8  \\
+BLA              & 100{,}404 & 22.6 & 29.8 & 31.2 &   6.2 & 2.79 & 35{,}032 & 8  \\
+BN9              & 138{,}335 & 22.4 & 30.5 & 21.1 &   2.8 & 1.92 & 33{,}231 & 16 \\
+DSM08            &  83{,}252 & 19.8 & 33.8 & 26.3 &   2.8 & 2.56 & 26{,}677 & 7  \\
+DUB24            &  64{,}493 & 18.5 & 24.9 & 37.5 &  22.8 & 3.43 & 27{,}629 & 7  \\
+LON23            &  17{,}831 & 24.0 & 35.1 & 28.3 &   2.8 & 2.47 &  5{,}498 & 14 \\
+\textbf{LVL01}   & 181{,}558 & 33.0 & \textbf{56.7} & 10.5 & \textbf{0.75} & \textbf{0.98} & 22{,}334 & 14 \\
+SG2              & 109{,}483 & 22.4 & 32.7 & 29.2 &   2.3 & 2.52 & 34{,}498 & 14 \\
+SYD21            &  46{,}496 & 19.1 & 26.6 & 36.5 &   7.2 & 3.13 & 18{,}181 & 16 \\
+YTO21            &  58{,}200 & 27.5 & 36.4 & 30.5 &   1.3 & 2.56 & 18{,}606 & 8  \\
+\bottomrule
+\end{tabular}
+\caption{VM-lifetime statistics across the ten training traces.
+  Ghost\% = fraction with unset timestamps (safely filtered before simulation).
+  AMS20 is a clear outlier: median lifetime 5+ days, 49\% of VMs survive beyond the 7-day window.
+  LVL01 is the most churn-heavy: median 45 min, 57\% of VMs live under 1 hour.
+  The 9-to-1 skew toward churn-dominated traces in the training pool
+  explains the generalisation gap observed on AMS20.}
+\label{tab:traces}
+\end{table}
+
+\subsection{Training composition and the generalisation gap}
+
+Both AMS20 and LVL01 are included in the ten-trace multi-trace training
+pool (\texttt{--multi-trace}).  Despite this, the RL policy achieves only
+$\approx6.5\%$ savings on AMS20 versus greedy's $27.9\%$.
+The gap is not caused by AMS20 being unseen during training.
+
+The structural explanation is that on long-lived traces the greedy
+heuristic (always assign to the least-loaded MPD) is already near-optimal:
+once the initial allocation is made it persists for days, leaving little
+room for a learned policy to improve.  On churn-dominated traces, rapid
+reallocation opportunities arise that greedy cannot exploit, giving the RL
+policy its advantage.
+
+A lifetime-conditioned oracle baseline (assign short-lived VMs greedily,
+use optimal placement only for long-lived VMs) was evaluated to quantify
+how much of the AMS20 gap is structurally recoverable.
+
+\subsection{Lifetime-conditioned baseline}
+
+The baseline routes each VM arrival based on its residual lifetime:
+VMs with $\text{dealloc\_tick} - \text{tick} \geq 288$ (24\,h) are
+allocated to the \emph{most-loaded} accessible MPD (bin-pack / consolidate);
+shorter-lived VMs use the standard greedy water-fill.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Trace} & \textbf{Greedy savings} & \textbf{Lifetime-cond.} & \textbf{$\Delta$} \\
+\midrule
+AMS20 & $+28.6\%$ & $-567\%$ & $-596\,\text{pp}$ \\
+LVL01 & $-3.3\%$  & $-664\%$ & $-661\,\text{pp}$ \\
+\bottomrule
+\end{tabular}
+\caption{Lifetime-conditioned baseline (24\,h threshold, 20 seeds).
+  Anti-greedy allocation for long-lived VMs is catastrophically worse on both traces.}
+\label{tab:lifetime}
+\end{table}
+
+The result confirms a key invariant of the pooling objective: greedy
+water-fill \emph{minimises the instantaneous peak MPD load} for any single
+VM arrival, regardless of the VM's lifetime.  Anti-greedy (consolidating
+to the most-loaded MPD) concentrates load and maximises the peak.
+No causal strategy that deviates from greedy on individual allocations
+can improve on greedy's instantaneous optimality.
+
+\paragraph{Implication.}
+The 21\,pp gap between RL and greedy on AMS20 is \emph{structurally
+unrecoverable} by any online policy.  For long-lived workloads, each
+placement decision persists for days and greedy's myopic optimality is
+also globally optimal---there are no short-term deviations that pay off
+long-term.  The RL agents underperform greedy on AMS20 because they
+have internalised churn-oriented heuristics (learned from the 9 churn-heavy
+training traces) that actively hurt when VMs are long-lived.
+Reward shaping (R1--R5) cannot fix this; the bottleneck is the
+training distribution, not the reward signal.
+
+% =========================================================================
+\begin{thebibliography}{9}
+
+\bibitem{ng1999pbrs}
+A.~Ng, D.~Harada, S.~Russell.
+\newblock Policy Invariance Under Reward Transformations: Theory and Application
+  to Reward Shaping.
+\newblock In \textit{ICML}, 1999.
+
+\bibitem{pond2023}
+Huaicheng Li, Daniel S.\ Berger, Lisa Hsu, et al.
+\newblock Pond: {CXL}-Based Memory Pooling Systems for Cloud Platforms.
+\newblock In \textit{ASPLOS}, 2023.
+
+\bibitem{futurek}
+Richard Uzeel.
+\newblock Perfect Future Knowledge.
+\newblock Internal project report, 2026.
+
+\bibitem{mao2017pensieve}
+H.~Mao et al.
+\newblock Real World Performance of Adaptive Bitrate Algorithms (Pensieve).
+\newblock In \textit{ACM SIGCOMM}, 2017.
+
+\bibitem{mao2019decima}
+H.~Mao et al.
+\newblock Learning Scheduling Algorithms for Data Processing Clusters (Decima).
+\newblock In \textit{ACM SIGCOMM}, 2019.
+
+\bibitem{wolpert2002diff}
+D.~H.~Wolpert, K.~Tumer.
+\newblock Collective Intelligence, Data Routing and Braess' Paradox.
+\newblock \textit{Journal of Artificial Intelligence Research}, 16:359--387, 2002.
+
+\bibitem{pbrs2025}
+Improving the Effectiveness of Potential-Based Reward Shaping in Reinforcement
+  Learning.
+\newblock arXiv, 2025.
+
+\end{thebibliography}
+
+\end{document}

@@ -124,3 +124,218 @@ All 20 tests fail. Root cause: `_make_minimal_env()` calls `OctopusMemPoolEnv(al
 | ARCH.md | Already documents future state (forward-looking) |
 
 No ambiguities that require a stop — all open questions in SPEEDUP_PLAN §12 are resolved.
+
+---
+
+## Code Review — commit 34a41ec506b9281bafbfcd919ecddbe4c0aeb012 (2026-05-01) [CORRECTED]
+
+Scope: JAX plan (docs/plans/v4/jax-plan.md) — full codebase re-read.
+Reviewed: octopus/env.py, octopus/data.py, octopus/kernels.py, scripts/train_rl.py,
+pyproject.toml, TODO.md, all test files. 145 tests confirmed passing.
+
+---
+
+### Phase 1: Repo Overview
+
+**Purpose:** RL agent (SAC via SB3) allocating VM memory across CXL MPDs to minimize peak
+load. Trains on replayed Azure traces via Gymnasium env.
+
+**Structure:**
+- `octopus/` — env.py, data.py, kernels.py (Numba JIT), augmentation.py, baselines.py, topology.py
+- `scripts/` — train_rl.py, evaluate.py, eval_rl.py, various analysis scripts
+- `tests/` — 145 pytest tests, all passing; no CI (local only)
+- `data/traces/` — 10 Azure trace pickles (not in git)
+- `data/topologies/` — 5 topology CSVs
+- `lcpo/` — unrelated external code, not part of the RL system
+
+**Entry points:** `scripts/train_rl.py main()` for training; `scripts/evaluate.py pooling_simulation()` for eval.
+
+**Key data flow:**
+```
+load_trace() → to_arrays() → TraceArrays (numpy CSR)
+OctopusMemPoolEnv(trace_arrays, M) → reset(seed) → step(action) loop
+```
+
+**Key data structures:**
+- `TraceArrays`: numpy CSR (vm_start int64, vm_end int64, vm_mem float32, node_ids int32, node_dram float32, node_offsets int32, vm_ptrs int32)
+- `events: list[tuple(tick:int, pod_id:int, vm_mem:float, dealloc_tick:int)]`
+- `_mpd_dt (num_mhd, capacity) float64` — dealloc ticks with inf sentinel
+- `_mpd_mem (num_mhd, capacity) float64` — mem GB per slot
+- `_mpd_n (num_mhd,) int32` — valid VM count per MPD after compaction
+
+---
+
+### Phase 2: File-by-File
+
+**octopus/env.py**
+
+Single responsibility: Gymnasium env. TraceArrays + M in, (obs, reward) per step out.
+
+Key functions:
+- `reset(seed)`: pod → events → augmentation → zero state → process departures to first tick
+- `step(action)`: softmax alloc → reward → advance event_idx → call `_process_departures_through` → `_get_obs()`
+- `_process_departures_through(tick)`: iterates ticks one-by-one via Python `range()`, applies numpy row-subtract, then compacts `_mpd_dt/_mpd_mem` via boolean mask per MPD
+- `_compute_D_j(tick)`: delegates to `_nb_compute_D_j` Numba kernel — vectorized, fast
+- `_get_obs()` A/B variant: calls `_nb_compute_D_S_j` Numba kernel — vectorized, fast
+- `_ensure_mpd_capacity(j)`: doubles capacity of all MPD arrays when MPD j overflows
+
+Surprises:
+- **`_mpd_dt` uses float64 + inf sentinel** (not int32). `_mpd_n` is the *valid* count after compaction — compaction runs in `_process_departures_through`. JAX plan specifies int32 and append-only (no compaction) — this is a **semantic difference requiring care in parity tests**.
+- `dealloc_events` shape is `(pod_dur, num_mhd)` — episode-dynamic. JAX must use static `(MAX_TICKS=2304, num_mhd)`.
+- `host_dealloc_events` shape is `(pod_dur, pod_size)` — episode-dynamic. JAX uses static `(MAX_TICKS, pod_size)`.
+- `dealloc_tick < self.pod_dur` check before scheduling dealloc: VMs with dealloc_tick ≥ pod_dur are not scheduled. JAX with fixed 2304-tick buffer must replicate this correctly.
+
+SPEEDUP_PLAN status: **ALL CHUNKS COMPLETE** (verified by reading the code):
+- Chunk 0: All 145 tests pass — constructor API fixed.
+- Chunk 1: `_mpd_dt/_mpd_mem/_mpd_n` implemented; Numba kernels in kernels.py.
+- Chunk 2: `precompute_pod_events_arrays` in data.py.
+- Chunk 3: `@njit(cache=True)` on `compute_D_j` and `compute_D_S_j`.
+
+**octopus/data.py**
+
+- `TraceArrays`: All fields except `vm_mem` and `node_dram` use int64/int32. `vm_mem` is float32.
+- `precompute_pod_events_arrays(trace_arrays, M, seeds)`: implemented — instantiates a throw-away env and calls `_generate_pod` + `_build_events` for each seed.
+- `_generate_pod` uses `_random.seed(seed); _random.shuffle(indices)` — Python stdlib RNG. NOT reproducible via JAX PRNG. JAX plan correctly handles this by calling these on host.
+
+**octopus/kernels.py**
+
+- `compute_D_j`: `mpd_dt` is float64 (not int32). Loop condition: `dt <= t_plus_W` (float compare with inf sentinel naturally excludes empty slots since inf > any tick+W).
+- `compute_D_S_j`: same semantics.
+- JAX parity: JAX will use `valid = arange(256) < _mpd_n` + separate `_mpd_dt > tick` mask. SB3 relies on compaction making all slots 0..n-1 valid and none expired. These produce identical D_j/S_j IF parity tests run with the same episode state — but the intermediate state representation differs.
+
+**pyproject.toml**
+
+No JAX dependencies yet. Need to add `jax`, `jaxlib`, `flax` or `equinox`, `optax`, `chex`
+as optional extras `[jax]`.
+
+---
+
+### Phase 3: Cross-Cutting Issues
+
+1. **Append-only vs. compacting `_mpd_n`**: SB3 `_mpd_n` = valid count AFTER compaction. JAX plan `_mpd_n` = append pointer BEFORE compaction. These produce the same D_j/S_j over a trajectory only if the masking is correct. Risk: if a parity test feeds the same actions but uses JAX's append-only state, the `valid` mask includes expired slots that SB3 compacted away. This is fine because `_mpd_dt > tick` excludes expired slots regardless — but the `_mpd_n` values will diverge after the first departure event.
+
+2. **MAX_ACTIVE_VMS=256 overflow risk (append-only)**: Plan sets this to 256, citing "empirical max 131 simultaneous". But with append-only and no compaction, `_mpd_n[j]` = total VMs ever allocated to MPD j during the entire episode, not just simultaneous. Over a 2304-tick episode with continuous arrivals and departures, this could easily exceed 256. This is the **single highest-risk design decision** in the JAX plan and needs verification against trace data before Phase 1.
+
+3. **`dealloc_tick >= pod_dur` handling**: SB3 skips scheduling dealloc for these VMs. In JAX with a fixed-size dealloc_buf, an out-of-bounds write would be silently ignored by JAX (index clipping) or cause an error. The plan needs explicit handling (clip dealloc_tick to MAX_TICKS-1 or use `jnp.where(dealloc_tick < MAX_TICKS, ...)`).
+
+4. **No octopus/jax/ module exists**: Must be created from scratch. No existing JAX infrastructure.
+
+5. **Most likely parity failure**: float32/float64 mismatch. SB3 uses float64 throughout. JAX defaults to float32. Parity tests must use `jax_enable_x64=True`. Production training uses float32 separately.
+
+---
+
+### Cross-reference: JAX Plan vs Codebase (updated 2026-05-05)
+
+| JAX Plan item | Codebase status |
+|---|---|
+| Prerequisites: Chunks 0-1 merged | **DONE** — all 145 tests pass, `_mpd_dt/_mpd_mem/_mpd_n` in env.py |
+| Chunk 2 (`precompute_pod_events_arrays`) | **DONE** — in data.py |
+| `octopus/jax/` module | Does NOT exist — create from scratch |
+| JAX `[jax]` optional extras in pyproject.toml | **DONE** — jax==0.6.2, jaxlib==0.6.2, flax==0.10.7, optax==0.2.8, chex==0.1.90 installed |
+| `requirements-jax.txt` pinned versions | NOT created yet |
+| `_mpd_dt/_mpd_mem/_mpd_n` in JAX OctopusState | **RESOLVED (2026-05-05)** — these are NOT in JAX state. D_j/S_j computed from `dealloc_buf` via einsum. MAX_ACTIVE_VMS=256 would overflow (max 2007 total allocs per MPD per episode observed). |
+| D_j/S_j JAX formula | `jnp.einsum('t,tj->j', weight, dealloc_buf)` where `weight[t] = max(0, 1-(t-tick)/W)` for `t > last_depart_tick` and `t <= tick+W`. Mathematically identical to Numba kernel since `dealloc_buf[t,j]` = total mem of VMs departing at t on MPD j. |
+| `dealloc_tick ≥ MAX_TICKS` handling | Clip to MAX_TICKS-1 with `jnp.clip(dealloc_tick, 0, MAX_TICKS-1)` before scatter |
+| `host_load`/`host_dealloc_buf` in JAX state | Correct — SB3 has these |
+| Float64 parity mode | Correct approach — `jax_enable_x64` for tests |
+
+---
+
+## Code Review — commit 34a41ec506b9281bafbfcd919ecddbe4c0aeb012 (2026-05-06)
+
+Scope: `docs/plans/v4/reward-ablation-plan.md` — reward ablation (R1–R5), A→R2/B→R3 rename,
+pipeline correctness tests.
+Reviewed: octopus/env.py, octopus/baselines.py, scripts/train_rl.py, scripts/eval_rl.py,
+scripts/evaluate.py, tests/test_new_reward_obs.py. Baseline: 162 tests passing.
+
+---
+
+### Phase 1: Repo Overview
+
+Same structure as prior review (all SPEEDUP_PLAN and JAX plan chunks complete). The SB3
+training pipeline is the target here. Key invariants to maintain:
+
+- `reward_variant` propagates from CLI → `_make_env()` → `OctopusMemPoolEnv.__init__` → assert
+- `obs_variant` propagates from CLI → `PoolingSavingsCallback` → async worker → `make_rl_alloc_cb`
+- A model trained with variant X must be evaluated with the exact same obs construction
+
+---
+
+### Phase 2: File-by-File (reward ablation scope)
+
+**octopus/env.py**
+
+- Line 94: `assert reward_variant in ("current", "A", "B")` — will reject R1/R4/R5 BEFORE alias normalisation runs if normalisation is added after the assert. Must add alias normalisation BEFORE the assert.
+- Lines 101–104: obs-dim branch uses `reward_variant != "current"` → gives rich obs for "A","B". After rename, R1 must also use simple obs. Condition must become `reward_variant in {"current", "R1"}`.
+- Lines 246–249: `D_j_pre` computed only if `reward_variant != "current"`. R1 does not need D_j. Condition must become `reward_variant not in {"current", "R1"}`.
+- Lines 275–303: Reward block. R1/R4/R5 branches need adding here.
+- Lines 321–328: `pooling_savings` computed inline in `if done:` block. R4 needs this pre-computed before the reward block — must hoist above reward.
+- `reset()` line 207: `self.max_peak = 0.0` — R5 needs `_sub_peak`, `_sub_step`, `_prev_potential` added here.
+- `__init__` line 71: no `sub_episode_len` or `pbrs_gamma` params — must add for R5.
+
+**scripts/train_rl.py**
+
+- Line 515: `choices=["current", "A", "B"]` — must add R1–R5.
+- Line 688: `if args.reward_variant != "current":` for mhd_to_hosts/Q_j precompute — must become `not in ("current", "R1", "A")` to skip precompute for R1 and the "A" deprecated alias.
+- Line 69 (async worker): `_obs_dim = max_degree * 6 + 2 if obs_variant != "current"` — must handle R1 as simple obs.
+- Line 73 (async worker): `track = obs_variant != "current"` — must handle R1 (R1 should NOT track_vm_allocs).
+- Lines 83–98 (async worker): `if obs_variant == "current":` … `else:` obs path — R1 must also take the simple-obs path.
+- Lines 763: `obs_variant=args.reward_variant` passed to `PoolingSavingsCallback` — fine; worker handles the logic.
+- No `--sub-episode-len` or `--pbrs-gamma` args — must add for R5.
+
+**scripts/eval_rl.py**
+
+- Line 122: `choices=["current", "A", "B"]` — must add R1–R5.
+- Line 190: `if obs_variant != "current":` for mhd_to_hosts/Q_j — must become `not in {"current", "R1"}` to skip precompute for R1.
+- Calls `make_rl_alloc_cb(obs_variant=obs_variant)` — the callback needs to handle R1 as simple obs.
+
+**scripts/evaluate.py** ← **PLAN GAP**
+
+- Line 347: `_obs_dim = max_degree * 6 + 2 if obs_variant != "current" else max_degree * 2 + 4` — R1 must use `max_degree * 2 + 4` but this condition won't catch "R1".
+- Line 356: `if obs_variant == "current":` … `else:` obs construction — R1 must take the simple-obs path.
+- Line 599: `track_vm_allocs=(reward_variant != "current")` in `evaluate.py main()` — R1 should not track (uses simple obs).
+
+**The plan (Chunk 0) only mentions `env.py`, `train_rl.py`, and `eval_rl.py`. It does NOT mention `evaluate.py`. But `evaluate.py:make_rl_alloc_cb` has the same `obs_variant != "current"` pattern and will produce wrong obs for R1.**
+
+**tests/test_new_reward_obs.py**
+
+- Tests currently use `reward_variant="A"` in several places — these will continue to work via alias.
+- `test_reward_variant_invalid` passes `"invalid"` and expects `AssertionError` — will still pass after the assert is extended.
+- `test_obs_space_shape_new_variants` checks `("A", "B")` — after rename, "A" should still work via alias.
+
+---
+
+### Phase 3: Cross-Cutting Issues
+
+1. **Plan gap — evaluate.py not updated for R1**: The `make_rl_alloc_cb` in `evaluate.py` uses `obs_variant != "current"` to pick obs dimension and construction path. If a model trained with R1 is evaluated via `eval_rl.py`, `make_rl_alloc_cb` will build a 50-dim obs for a model expecting 20 dims → shape mismatch → crash. The fix is identical to what the plan does in `eval_rl.py`: use `obs_variant not in {"current", "R1"}` for the rich obs branch.
+
+2. **Async worker in train_rl.py not covered by plan**: Lines 69, 73, and 83–98 in the async worker all use `obs_variant != "current"` and will break for R1. Must add `_SIMPLE_OBS = {"current", "R1"}` sentinel or equivalent inline check.
+
+3. **R5: `_sub_step` resets are episode-relative**: `_sub_step` counts steps within the current sub-episode, but the plan resets `_sub_peak = 0.0` at boundaries while MPD loads carry over. The boundary condition `self._sub_step % self.sub_episode_len == 0` will fire at tick 0 (first step) since `0 % 576 == 0`. The plan handles this correctly by computing `sub_savings` even at boundary 0, but an episode of fewer than `sub_episode_len` steps will never hit the boundary — only the `done` branch fires. This is correct behavior.
+
+4. **R4 info block**: After hoisting `_pooling_ratio/_pooling_savings`, the original inline formula in the `if done:` block must be replaced with the pre-computed values. Forgetting this creates a discrepancy between info["pooling_savings"] and the actual terminal reward.
+
+5. **Existing tests under rename**: `test_reward_A_in_range` and `test_reward_B_in_range` in `test_new_reward_obs.py` use "A" and "B". These will still pass via alias normalization. But the obs-shape tests (`test_obs_space_shape_new_variants`) iterate `("A", "B")` — these will also still pass since aliases map to the same obs dim as R2/R3.
+
+---
+
+### Cross-reference: Reward-Ablation Plan vs Codebase
+
+| Plan item | Codebase status | Notes |
+|---|---|---|
+| Chunk 0: alias normalisation in `env.py` | NOT DONE | Must come BEFORE assert |
+| Chunk 0: extend assert to R1–R5 | NOT DONE | |
+| Chunk 0: rename A→R2, B→R3 in reward block | NOT DONE | |
+| Chunk 0: obs-dim `_SIMPLE_OBS = {"current","R1"}` | NOT DONE | |
+| Chunk 0: `train_rl.py` choices + precompute condition | NOT DONE | |
+| Chunk 0: `eval_rl.py` choices + obs-path condition | NOT DONE | |
+| Chunk 0: **`evaluate.py` obs condition** | NOT IN PLAN → **gap** | Must fix `make_rl_alloc_cb` |
+| Chunk 0: **async worker in `train_rl.py`** | NOT IN PLAN → **gap** | Lines 69/73/83-98 |
+| Chunk 1: R1 reward branch | NOT DONE | |
+| Chunk 2: hoist `_pooling_savings` | NOT DONE | |
+| Chunk 2: R4 reward branch | NOT DONE | |
+| Chunk 3: R5 `__init__` params | NOT DONE | |
+| Chunk 3: R5 reset state | NOT DONE | |
+| Chunk 3: R5 reward branch | NOT DONE | |
+| Chunk 3: `train_rl.py` R5 args | NOT DONE | |
+| Chunk 4: `tests/test_pipeline_correctness.py` | NOT DONE | 10 tests |

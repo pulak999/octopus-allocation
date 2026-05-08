@@ -136,14 +136,13 @@ def test_recompute_topology_derived_after_link_failure():
 # ---------------------------------------------------------------------------
 
 def test_mpd_vm_allocs_populated_on_step():
-    """After stepping through a VM arrival, mpd_vm_allocs should have entries."""
+    """After stepping through a VM arrival, flat MPD arrays should have entries."""
     env, _ = _make_minimal_env(reward_variant="A")
     obs, info = env.reset(seed=0)
-    assert sum(len(env.mpd_vm_allocs[j]) for j in range(env.num_mhd)) == 0
+    assert int(env._mpd_n.sum()) == 0
     action = env.action_space.sample()
     env.step(action)
-    total_entries = sum(len(env.mpd_vm_allocs[j]) for j in range(env.num_mhd))
-    assert total_entries > 0
+    assert int(env._mpd_n.sum()) > 0
 
 
 def test_cur_host_cxl_load_updated():
@@ -156,7 +155,7 @@ def test_cur_host_cxl_load_updated():
 
 
 def test_mpd_vm_allocs_purged_on_departure():
-    """VM entries in mpd_vm_allocs should be removed once their dealloc_tick is processed."""
+    """Expired VM entries must be compacted from flat MPD arrays after departure processing."""
     env, _ = _make_minimal_env(reward_variant="A", lookahead_window=200)
     env.reset(seed=0)
     # Step through all events
@@ -164,12 +163,13 @@ def test_mpd_vm_allocs_purged_on_departure():
     while not done:
         _, _, done, _, _ = env.step(env.action_space.sample())
     # Any remaining entries must have dealloc_tick > _last_depart_tick
-    # (VMs still "active" past the last processed departure tick)
     processed_up_to = env._last_depart_tick
     for j in range(env.num_mhd):
-        for dt, m in env.mpd_vm_allocs[j]:
+        n = env._mpd_n[j]
+        for s in range(n):
+            dt = env._mpd_dt[j, s]
             assert dt > processed_up_to, (
-                f"MPD {j} has VM with dealloc_tick={dt} <= processed_up_to={processed_up_to}"
+                f"MPD {j} slot {s} has dealloc_tick={dt} <= processed_up_to={processed_up_to}"
             )
 
 
@@ -215,7 +215,9 @@ def test_compute_D_j_exact():
     env, _ = _make_minimal_env(reward_variant="A", lookahead_window=10)
     env.reset(seed=0)
     # Manually inject a VM into MPD 0 departing at tick 5 (W=10, tick=0 → weight = 1 - 5/10 = 0.5)
-    env.mpd_vm_allocs[0].append((5, 4.0))
+    env._mpd_dt[0, 0] = 5.0
+    env._mpd_mem[0, 0] = 4.0
+    env._mpd_n[0] = 1
     D_j = env._compute_D_j(tick=0)
     assert D_j[0] == pytest.approx(4.0 * 0.5)
     assert D_j[1] == pytest.approx(0.0)
@@ -225,7 +227,9 @@ def test_compute_D_j_beyond_window():
     """VM departing beyond W is sticky (not in D_j)."""
     env, _ = _make_minimal_env(reward_variant="A", lookahead_window=10)
     env.reset(seed=0)
-    env.mpd_vm_allocs[0].append((15, 4.0))  # dt=15 > tick+W=10
+    env._mpd_dt[0, 0] = 15.0   # dt=15 > tick+W=10
+    env._mpd_mem[0, 0] = 4.0
+    env._mpd_n[0] = 1
     D_j = env._compute_D_j(tick=0)
     assert D_j[0] == pytest.approx(0.0)
 
@@ -340,7 +344,7 @@ def test_obs_sync_initial_step():
         "base_time": env.events[0][0],  # not used in new obs path
         "num_mhd": num_mhd,
         "pod_rss_mem": float(norm),
-        "mpd_vm_allocs": [list(a) for a in env.mpd_vm_allocs],  # copy (empty at reset)
+        "mpd_vm_allocs": [[] for _ in range(env.num_mhd)],  # empty at reset
         "host_cxl_load": env.cur_host_cxl_load.copy(),
     }
 

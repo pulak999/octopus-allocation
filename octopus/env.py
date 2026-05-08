@@ -22,6 +22,10 @@ from datetime import timedelta
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+from octopus.kernels import compute_D_j as _nb_compute_D_j
+from octopus.kernels import compute_D_S_j as _nb_compute_D_S_j
+
+_INITIAL_MPD_SLOTS = 64
 
 
 class OctopusMemPoolEnv(gym.Env):
@@ -60,9 +64,12 @@ class OctopusMemPoolEnv(gym.Env):
         precomputed_events: dict | None = None,
         aug_config=None,
         trace_pool=None,
+        trace_pool_events=None,
         reward_variant: str = "current",
         lookahead_window: int = 200,
         reward_lambda: float = 0.2,
+        sub_episode_len: int = 576,
+        pbrs_gamma: float = 0.99,
     ):
         super().__init__()
 
@@ -85,15 +92,20 @@ class OctopusMemPoolEnv(gym.Env):
         self.max_degree = max(len(v) for v in self.host_to_mhds.values())
         assert self.max_degree > 0, "Topology has a host with no accessible MPDs"
 
-        # Reward variant config
-        assert reward_variant in ("current", "A", "B"), \
-            f"reward_variant must be 'current', 'A', or 'B', got {reward_variant!r}"
+        # Reward variant config — normalise deprecated aliases before assert
+        _VARIANT_ALIASES = {"A": "R2", "B": "R3"}
+        reward_variant = _VARIANT_ALIASES.get(reward_variant, reward_variant)
+        assert reward_variant in ("current", "R1", "R2", "R3", "R4", "R5"), \
+            f"reward_variant must be one of current/R1/R2/R3/R4/R5, got {reward_variant!r}"
         self.reward_variant = reward_variant
         self.lookahead_window = lookahead_window
         self.reward_lambda = reward_lambda
+        self.sub_episode_len = sub_episode_len
+        self.pbrs_gamma = pbrs_gamma
 
-        # Spaces
-        if reward_variant != "current":
+        # Spaces — "current" and "R1" use the simple 2*max_degree+4 obs
+        _SIMPLE_OBS = {"current", "R1"}
+        if reward_variant not in _SIMPLE_OBS:
             obs_dim = self.max_degree * 6 + 2
         else:
             obs_dim = self.max_degree * 2 + 4
@@ -117,8 +129,9 @@ class OctopusMemPoolEnv(gym.Env):
         self.aug_config = aug_config
         self._aug_rng = np.random.default_rng()
 
-        # Multi-trace: list of (all_vms, node_to_vms, node_to_machine, vm_type_sz, machine_sz)
+        # Multi-trace: parallel lists — trace_pool[i] pairs with trace_pool_events[i]
         self.trace_pool = trace_pool
+        self.trace_pool_events = trace_pool_events  # list[dict] | None
 
         # Seed management
         self._init_seed = seed
@@ -145,11 +158,13 @@ class OctopusMemPoolEnv(gym.Env):
             self._seed = (self._init_seed or 0) + self._episode_count
         self._episode_count += 1
 
-        # 0. Multi-trace: swap to a random trace if enabled
+        # 0. Multi-trace: swap to a random trace (and its precomputed cache) if enabled
         if (self.aug_config is not None and self.aug_config.multi_trace
                 and self.trace_pool):
             trace_idx = int(self._aug_rng.integers(0, len(self.trace_pool)))
-            self._switch_trace(self.trace_pool[trace_idx])
+            cache = (self.trace_pool_events[trace_idx]
+                     if self.trace_pool_events else None)
+            self._switch_trace(self.trace_pool[trace_idx], cache)
 
         # 1 & 2. Pod assignment + event timeline
         _t1 = _time.perf_counter() if self._reset_timing else None
@@ -187,18 +202,21 @@ class OctopusMemPoolEnv(gym.Env):
         self.dealloc_events = np.zeros(
             (self.pod_dur, self.num_mhd), dtype=np.float64
         )
-        # Per-MPD active VM list: mpd_vm_allocs[j] = [(dealloc_tick, mem_gb), ...]
-        self.mpd_vm_allocs: list[list[tuple[int, float]]] = [
-            [] for _ in range(self.num_mhd)
-        ]
+        # Flat per-MPD active-VM arrays (replaces mpd_vm_allocs list-of-lists)
+        self._mpd_capacity = _INITIAL_MPD_SLOTS
+        self._mpd_dt  = np.full((self.num_mhd, _INITIAL_MPD_SLOTS), np.inf, dtype=np.float64)
+        self._mpd_mem = np.zeros((self.num_mhd, _INITIAL_MPD_SLOTS), dtype=np.float64)
+        self._mpd_n   = np.zeros(self.num_mhd, dtype=np.int32)
         # Per-host CXL load tracking (for P_j neighborhood pressure)
         pod_size = len(self.pod_nodes) if hasattr(self, "pod_nodes") else self.pod_size
         self.cur_host_cxl_load = np.zeros(pod_size, dtype=np.float64)
         self.host_dealloc_events = np.zeros((self.pod_dur, pod_size), dtype=np.float64)
         self.max_peak = 0.0
+        self._sub_peak = 0.0         # R5: peak within current sub-episode window
+        self._sub_step = 0           # R5: steps taken in current sub-episode
+        self._prev_potential = 0.0   # R5: Φ(s_0) = 0 at episode start
         self.event_idx = 0
         self._last_depart_tick = -1                  # nothing processed yet
-        self._cached_D_j: np.ndarray | None = None  # cached from last step(), used in _get_obs()
 
         # 4. Process departures up to first event's tick
         if self.events:
@@ -234,8 +252,9 @@ class OctopusMemPoolEnv(gym.Env):
 
         alloc_gb = proportions * vm_mem              # GB per accessible MPD
 
-        # --- Compute D_j before allocation (used by reward A/B and obs) -
-        if self.reward_variant != "current":
+        # --- Compute D_j before allocation (used by R2/R3/R4/R5 reward and obs) -
+        _SIMPLE_OBS = {"current", "R1"}
+        if self.reward_variant not in _SIMPLE_OBS:
             D_j_pre = self._compute_D_j(tick)
         else:
             D_j_pre = None
@@ -247,7 +266,11 @@ class OctopusMemPoolEnv(gym.Env):
             self.cur_cxl_mem_vec[mhd] += alloc_gb[idx]
             # Track per-MPD active VMs (for D_j / S_j computation)
             if alloc_gb[idx] > 0:
-                self.mpd_vm_allocs[mhd].append((dealloc_tick, float(alloc_gb[idx])))
+                self._ensure_mpd_capacity(mhd)
+                slot = self._mpd_n[mhd]
+                self._mpd_dt[mhd, slot] = float(dealloc_tick)
+                self._mpd_mem[mhd, slot] = float(alloc_gb[idx])
+                self._mpd_n[mhd] += 1
 
         # Track per-host CXL load (for P_j neighborhood pressure)
         self.cur_host_cxl_load[node_in_pod_id] += vm_mem
@@ -258,13 +281,46 @@ class OctopusMemPoolEnv(gym.Env):
                 self.dealloc_events[dealloc_tick, mhd] += alloc_gb[idx]
             self.host_dealloc_events[dealloc_tick, node_in_pod_id] += vm_mem
 
-        # --- Reward ------------------------------------------------------
+        # --- Pre-compute done + pooling metric (used by R4/R5 reward and info) --
+        # done_flag: True if this is the last event in the episode (event_idx not yet advanced)
+        done_flag = (self.event_idx + 1) >= len(self.events)
         new_peak = float(np.max(self.cur_cxl_mem_vec))
+        self.max_peak = max(self.max_peak, new_peak)
+        _pooling_ratio = (
+            (self.max_peak * self.num_mhd / self.pod_dram)
+            if self.pod_dram > 0 else 0.0
+        )
+        _pooling_savings = 1.0 - _pooling_ratio
+
+        # --- Reward ------------------------------------------------------
         if self.reward_variant == "current":
             fair_share = self.pod_dram / self.num_mhd if self.num_mhd > 0 else 1.0
             mpd_loads = self.cur_cxl_mem_vec / (fair_share + 1e-12)
             load_variance = float(np.var(mpd_loads))
             reward = -(new_peak - old_peak) / (fair_share + 1e-12) - self.variance_lambda * load_variance
+        elif self.reward_variant == "R1":
+            norm = self.pod_dram if self.pod_dram > 0 else 1.0
+            reward = -new_peak / norm
+        elif self.reward_variant == "R4":
+            reward = _pooling_savings if done_flag else 0.0
+        elif self.reward_variant == "R5":
+            norm = self.pod_dram if self.pod_dram > 0 else 1.0
+            self._sub_peak = max(self._sub_peak, new_peak)
+            self._sub_step += 1
+            cur_potential = -new_peak / norm
+            pbrs = self.pbrs_gamma * cur_potential - self._prev_potential
+            self._prev_potential = cur_potential
+            at_boundary = (self._sub_step % self.sub_episode_len == 0)
+            if at_boundary or done_flag:
+                sub_ratio = (
+                    (self._sub_peak * self.num_mhd / self.pod_dram)
+                    if self.pod_dram > 0 else 0.0
+                )
+                sub_savings = 1.0 - sub_ratio
+                reward = sub_savings + pbrs
+                self._sub_peak = 0.0    # reset sub-peak; MPD loads carry over
+            else:
+                reward = pbrs
         else:
             norm = self.pod_dram if self.pod_dram > 0 else 1.0
             # ĉ_j+(t) = (c_j_post - D_j_pre) / D_pod  for j ∈ N(i)
@@ -273,9 +329,9 @@ class OctopusMemPoolEnv(gym.Env):
                 for mhd in mhd_list
             ]
             reward_A = -float(max(chat_plus))
-            if self.reward_variant == "A":
+            if self.reward_variant == "R2":
                 reward = reward_A
-            else:  # "B"
+            else:  # "R3"
                 # ĉ_j(t) = (c_j_pre - D_j_pre) / D_pod  for j ∉ N(i)
                 # c_j_pre = cur_cxl_mem_vec[j] - alloc_gb for j ∈ N(i), unchanged for j ∉ N(i)
                 mhd_set = set(mhd_list)
@@ -288,7 +344,6 @@ class OctopusMemPoolEnv(gym.Env):
                 else:
                     global_term = 0.0
                 reward = reward_A - self.reward_lambda * float(global_term)
-        self.max_peak = max(self.max_peak, new_peak)
 
         # --- Advance to next event --------------------------------------
         self.event_idx += 1
@@ -307,13 +362,8 @@ class OctopusMemPoolEnv(gym.Env):
             "tick": tick,
         }
         if done:
-            pooling_ratio = (
-                (self.max_peak * self.num_mhd / self.pod_dram)
-                if self.pod_dram > 0
-                else 0.0
-            )
-            info["pooling_ratio"] = pooling_ratio
-            info["pooling_savings"] = 1.0 - pooling_ratio
+            info["pooling_ratio"] = _pooling_ratio
+            info["pooling_savings"] = _pooling_savings
 
         return self._get_obs(), float(reward), done, False, info
 
@@ -463,12 +513,19 @@ class OctopusMemPoolEnv(gym.Env):
         # Numerical safety (guard against tiny drift below zero)
         np.maximum(self.cur_cxl_mem_vec, 0.0, out=self.cur_cxl_mem_vec)
         np.maximum(self.cur_host_cxl_load, 0.0, out=self.cur_host_cxl_load)
-        # Purge expired VM entries from per-MPD lists
+        # Compact expired VM entries from flat MPD arrays
         for j in range(self.num_mhd):
-            if self.mpd_vm_allocs[j]:
-                self.mpd_vm_allocs[j] = [
-                    (dt, m) for dt, m in self.mpd_vm_allocs[j] if dt > tick
-                ]
+            n = self._mpd_n[j]
+            if n == 0:
+                continue
+            keep = self._mpd_dt[j, :n] > tick
+            new_n = int(keep.sum())
+            if new_n < n:
+                self._mpd_dt[j, :new_n]  = self._mpd_dt[j, :n][keep]
+                self._mpd_mem[j, :new_n] = self._mpd_mem[j, :n][keep]
+                self._mpd_dt[j, new_n:n]  = np.inf
+                self._mpd_mem[j, new_n:n] = 0.0
+                self._mpd_n[j] = new_n
         self._last_depart_tick = tick
 
     # ------------------------------------------------------------------
@@ -494,18 +551,13 @@ class OctopusMemPoolEnv(gym.Env):
         D_j = sum over active VMs on MPD j departing within W steps of
               mem(v) * (1 - (end(v) - t) / W).
 
-        Only considers VMs already in mpd_vm_allocs (pre-allocation for
-        the current event). All entries have dealloc_tick > tick (purged
-        by _process_departures_through).
+        Only considers VMs in the flat _mpd_dt/_mpd_mem arrays (pre-allocation
+        for the current event). All valid entries have dealloc_tick > tick
+        (compacted by _process_departures_through).
         """
-        D = np.zeros(self.num_mhd, dtype=np.float64)
-        W = self.lookahead_window
-        t_plus_W = tick + W
-        for j in range(self.num_mhd):
-            for dt, mem in self.mpd_vm_allocs[j]:
-                if dt <= t_plus_W:
-                    D[j] += mem * (1.0 - (dt - tick) / W)
-        return D
+        return _nb_compute_D_j(
+            self._mpd_dt, self._mpd_mem, self._mpd_n, tick, self.lookahead_window
+        )
 
     # ------------------------------------------------------------------
     def _recompute_topology_derived(self):
@@ -572,13 +624,24 @@ class OctopusMemPoolEnv(gym.Env):
         self._recompute_topology_derived()
 
     # ------------------------------------------------------------------
-    def _switch_trace(self, trace_arrays):
-        """Swap trace for multi-trace augmentation.
+    def _ensure_mpd_capacity(self, j: int):
+        """Double flat MPD array capacity (across all MPDs) if MPD j is full."""
+        if self._mpd_n[j] < self._mpd_capacity:
+            return
+        new_cap = self._mpd_capacity * 2
+        new_dt  = np.full((self.num_mhd, new_cap), np.inf, dtype=np.float64)
+        new_mem = np.zeros((self.num_mhd, new_cap), dtype=np.float64)
+        new_dt[:, :self._mpd_capacity]  = self._mpd_dt
+        new_mem[:, :self._mpd_capacity] = self._mpd_mem
+        self._mpd_dt = new_dt
+        self._mpd_mem = new_mem
+        self._mpd_capacity = new_cap
 
-        trace_arrays: TraceArrays — numpy representation of the new trace.
-        Precomputed event cache is NOT used with multi-trace (events built fresh).
-        """
+    # ------------------------------------------------------------------
+    def _switch_trace(self, trace_arrays, precomputed_events=None):
+        """Swap trace (and its precomputed event cache) for multi-trace augmentation."""
         self.trace_arrays = trace_arrays
+        self._precomputed_events = precomputed_events
 
     # ------------------------------------------------------------------
     def _get_obs(self) -> np.ndarray:
@@ -591,7 +654,8 @@ class OctopusMemPoolEnv(gym.Env):
         n_acc = len(mhd_list)
         norm = self.pod_dram if self.pod_dram > 0 else 1.0
 
-        if self.reward_variant == "current":
+        _SIMPLE_OBS = {"current", "R1"}
+        if self.reward_variant in _SIMPLE_OBS:
             # --- Original 2*max_degree+4 obs ----------------------------
             loads = np.zeros(self.max_degree, dtype=np.float32)
             for idx, mhd in enumerate(mhd_list):
@@ -617,16 +681,9 @@ class OctopusMemPoolEnv(gym.Env):
         else:
             # --- New 6*max_degree+2 obs (variants A and B) --------------
             # D_j and S_j for all MPDs at current tick
-            W = self.lookahead_window
-            t_plus_W = tick + W
-            D_j = np.zeros(self.num_mhd, dtype=np.float64)
-            S_j = np.zeros(self.num_mhd, dtype=np.float64)
-            for j in range(self.num_mhd):
-                for dt, mem in self.mpd_vm_allocs[j]:
-                    if dt <= t_plus_W:
-                        D_j[j] += mem * (1.0 - (dt - tick) / W)
-                    else:
-                        S_j[j] += mem
+            D_j, S_j = _nb_compute_D_S_j(
+                self._mpd_dt, self._mpd_mem, self._mpd_n, tick, self.lookahead_window
+            )
 
             obs = np.zeros(self.max_degree * 6 + 2, dtype=np.float32)
             for k, mhd in enumerate(mhd_list):

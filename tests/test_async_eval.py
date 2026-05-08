@@ -112,14 +112,16 @@ def _run_worker_roundtrip(n_iter=2, obs_variant="current", timeout=60):
 class TestWorkerRoundtrip:
     def test_returns_mean_std_snap_step(self):
         result, exitcode = _run_worker_roundtrip(n_iter=2)
-        mean, std, snap_step = result
+        mean, std, snap_step, worker_wall_s = result
         assert isinstance(mean, float)
         assert isinstance(std, float)
         assert snap_step == 100_000
+        assert isinstance(worker_wall_s, float)
+        assert worker_wall_s >= 0.0
         assert exitcode == 0
 
     def test_mean_in_valid_range(self):
-        mean, std, _ = _run_worker_roundtrip(n_iter=3)[0]
+        mean, std, _, _wall = _run_worker_roundtrip(n_iter=3)[0]
         # savings = 1 - pooling_ratio; pooling_ratio can be > 1, savings can be < 0
         # but must be finite
         assert np.isfinite(mean)

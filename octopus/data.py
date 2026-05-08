@@ -317,6 +317,77 @@ def precompute_pod_events(trace_data, M, seeds, mem_idx=1, skip_hotfix=False):
     return cache
 
 
+def precompute_pod_events_arrays(trace_arrays, M, seeds, skip_hotfix=False,
+                                 cache_dir=None):
+    """Precompute VM arrival event lists from a :class:`TraceArrays` object.
+
+    Calls :meth:`OctopusMemPoolEnv._generate_pod` and
+    :meth:`OctopusMemPoolEnv._build_events` internally so the cached events
+    are bit-for-bit identical to those produced by ``env.reset()``.
+
+    Parameters
+    ----------
+    trace_arrays : TraceArrays
+    M : list[list[int]]
+    seeds : iterable[int]
+    skip_hotfix : bool
+    cache_dir : str | None
+        Directory for on-disk cache.  On a hit the result is loaded instantly;
+        on a miss it is built then saved.  Cache key is an MD5 fingerprint of
+        the trace data + M + seeds + skip_hotfix.
+
+    Returns
+    -------
+    cache : dict[int, tuple]
+        ``{seed → (events, pod_dur, pod_dram, base_time, pod_start_ts)}``
+    """
+    import hashlib
+    import os
+    import pickle
+
+    seeds = list(seeds)
+
+    if cache_dir is not None:
+        h = hashlib.md5()
+        # Fingerprint: first/last 200 VMs of each key array + total count
+        for arr in (trace_arrays.vm_start, trace_arrays.vm_end, trace_arrays.vm_mem):
+            h.update(arr[:200].tobytes())
+            h.update(arr[-200:].tobytes())
+            h.update(str(len(arr)).encode())
+        h.update(str(M).encode())
+        h.update(str(seeds).encode())
+        h.update(str(skip_hotfix).encode())
+        cache_path = os.path.join(cache_dir, f"{h.hexdigest()}.pkl")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        if os.path.exists(cache_path):
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    from octopus.env import OctopusMemPoolEnv  # deferred — avoids circular import
+
+    env = OctopusMemPoolEnv(
+        trace_arrays=trace_arrays, M=M, seed=0, skip_hotfix=skip_hotfix
+    )
+    result = {}
+    for seed in seeds:
+        env._generate_pod(seed)
+        env._build_events()
+        result[seed] = (
+            list(env.events),
+            env.pod_dur,
+            env.pod_dram,
+            env.base_time,
+            env._pod_start_ts,
+        )
+
+    if cache_dir is not None:
+        with open(cache_path, "wb") as f:
+            pickle.dump(result, f)
+
+    return result
+
+
 def load_topology(csv_path):
     """Load a topology CSV (``server,pool``) and return adjacency matrix.
 

@@ -66,7 +66,7 @@ def _eval_model_on_trace(model, max_deg, trace_data, M, n_iter,
     savings_list = []
     ratio_list = []
     detail_rows = []
-    track = obs_variant != "current"
+    track = obs_variant not in {"current", "R1"}
 
     rl_cb = make_rl_alloc_cb(
         model, max_deg,
@@ -118,10 +118,11 @@ def main():
     )
     ap.add_argument(
         "--reward-variant",
-        choices=["current", "A", "B"],
+        choices=["current", "R1", "R2", "R3", "R4", "R5", "A", "B"],
         default=None,
         help="Reward variant used during training (determines obs layout). "
-             "If omitted, read from config.json in the checkpoint directory.",
+             "If omitted, read from config.json in the checkpoint directory. "
+             "A/B are deprecated aliases for R2/R3.",
     )
     ap.add_argument(
         "--lookahead-window",
@@ -184,10 +185,12 @@ def main():
         lookahead_window = lookahead_window or 200
         print(f"  obs_variant={obs_variant}  lookahead_window={lookahead_window}")
 
-        # Precompute topology-derived structures for new obs variants
+        # Precompute topology-derived structures for rich obs variants
+        # R1 and "current" use simple obs — no mhd_to_hosts/Q_j needed
+        _SIMPLE_OBS = {"current", "R1"}
         mhd_to_hosts = None
         Q_j = None
-        if obs_variant != "current":
+        if obs_variant not in _SIMPLE_OBS:
             num_mhd = len(M[0])
             mhd_to_hosts = {j: [] for j in range(num_mhd)}
             host_to_mhds_tmp = {}

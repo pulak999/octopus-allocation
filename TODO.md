@@ -1,3 +1,173 @@
+# Reward Ablation — Tasks (docs/plans/v4/reward-ablation-plan.md)
+
+Active plan. All chunks below are sequentially dependent.
+
+## Chunk 0 — Rename A→R2, B→R3 + add R1–R5 to env/train/eval
+
+### octopus/env.py
+- [ ] Add `_VARIANT_ALIASES = {"A": "R2", "B": "R3"}` normalisation BEFORE assert
+- [ ] Extend assert to `("current", "R1", "R2", "R3", "R4", "R5")`
+- [ ] Replace `reward_variant == "A"` → `== "R2"`, `== "B"` → `== "R3"` in reward block
+- [ ] Update obs-dim branch: `_SIMPLE_OBS = {"current", "R1"}`; simple if in _SIMPLE_OBS
+- [ ] Update D_j_pre condition: compute only if `reward_variant not in {"current", "R1"}`
+
+### scripts/train_rl.py
+- [ ] Extend `choices` for `--reward-variant` to include R1–R5 (keep A, B deprecated)
+- [ ] Update precompute condition: `not in ("current", "R1", "A")`
+- [ ] Update async worker obs-dim and track_vm_allocs: use `_SIMPLE_OBS = {"current", "R1"}`
+- [ ] Update async worker obs-construction: R1 takes simple-obs path
+
+### scripts/eval_rl.py
+- [ ] Extend `choices` for `--reward-variant` to include R1–R5
+- [ ] Update mhd_to_hosts/Q_j precompute condition: `not in {"current", "R1"}`
+
+### scripts/evaluate.py  ← plan gap, must fix too
+- [ ] Update `make_rl_alloc_cb` `_obs_dim`: use `not in {"current", "R1"}` for rich obs
+- [ ] Update `make_rl_alloc_cb` obs-construction branch: R1 takes simple-obs path
+
+## Chunk 1 — Add R1
+
+### octopus/env.py
+- [ ] Add `elif self.reward_variant == "R1": reward = -new_peak / norm` in reward block
+
+## Chunk 2 — Add R4 (sparse terminal)
+
+### octopus/env.py
+- [ ] Hoist `_pooling_ratio/_pooling_savings` computation before reward block
+- [ ] Add `elif self.reward_variant == "R4": reward = _pooling_savings if done else 0.0`
+- [ ] Replace inline formula in `if done:` info block with pre-computed vars
+
+## Chunk 3 — Add R5 (R4 + PBRS + Sub-episodes)
+
+### octopus/env.py
+- [ ] Add `sub_episode_len: int = 576` and `pbrs_gamma: float = 0.99` to `__init__`
+- [ ] Add `self._sub_peak = 0.0`, `self._sub_step = 0`, `self._prev_potential = 0.0` to `reset()`
+- [ ] Implement R5 reward block in `step()`
+
+### scripts/train_rl.py
+- [ ] Add `--sub-episode-len INT` default 576
+- [ ] Add `--pbrs-gamma FLOAT` default 0.99
+- [ ] Pass both through `_make_env` lambda → `OctopusMemPoolEnv`
+
+## Chunk 4 — Pipeline correctness tests
+
+### tests/test_pipeline_correctness.py (new file)
+- [ ] Test 1: Mass conservation — `sum(cur_cxl_mem_vec) == sum(live allocations)`
+- [ ] Test 2: Deallocation clears memory exactly
+- [ ] Test 3: `pooling_ratio` formula verification
+- [ ] Test 4: Eval pipeline vs env parity (highest priority)
+- [ ] Test 5: R4 intermediate rewards are zero
+- [ ] Test 6: R5 sub-peak resets, MPD loads do not
+- [ ] Test 7: R5 PBRS telescoping identity
+- [ ] Test 8: Obs reflects actual env state
+- [ ] Test 9: `greedy_alloc` mutation regression
+- [ ] Test 10: R1 reward non-positive and bounded
+
+---
+
+# JAX SAC Trainer — Tasks (docs/plans/v4/jax-plan.md)
+
+**Gate met:** SPEEDUP_PLAN Chunks 0-3 are all complete (all 145 tests pass, 2026-05-01).
+
+## Phase 0 — Dependencies
+
+- [x] Add `[jax]` optional extras to `pyproject.toml`: `jax>=0.4.25`, `jaxlib>=0.4.25`, `flax>=0.8.0`, `optax>=0.2.2`, `chex>=0.1.86`
+- [x] Confirm JAX CPU-mode: installed jax==0.6.2, jaxlib==0.6.2; `jax.devices()` → CpuDevice(id=0)
+- [x] Create `requirements-jax.txt` with pinned versions (jax==0.6.2, jaxlib==0.6.2, flax==0.10.7, optax==0.2.8, chex==0.1.90, orbax-checkpoint==0.11.37)
+
+## Phase 1 — JAX environment contract (pure functions)
+
+**1.0 Pre-implementation: verify MAX_ACTIVE_VMS safety for append-only semantics** — RESOLVED
+- [x] Analysis complete: max total VM allocations per MPD per episode = **2007** (LVL01 trace, seed=2).
+  MAX_ACTIVE_VMS=256 would overflow. **Resolution: Option A — compute D_j/S_j from dealloc_buf
+  directly. `_mpd_dt/_mpd_mem/_mpd_n` are NOT in JAX state. D_j/S_j computed via
+  `jnp.einsum('t,tj->j', weight, state.dealloc_buf)` — mathematically identical to Numba kernel.**
+
+**1.1 OctopusState dataclass + StaticConfig**
+- [ ] Create `octopus/jax/__init__.py` (empty)
+- [ ] Create `octopus/jax/env.py` with:
+  - `OctopusState` as `@chex.dataclass` with fields:
+    `mpd_load (num_mhd,) float32`, `dealloc_buf (MAX_TICKS, num_mhd) float32`,
+    `host_load (pod_size,) float32`, `host_dealloc_buf (MAX_TICKS, pod_size) float32`,
+    `max_peak scalar float32`, `event_idx scalar int32`,
+    `last_depart_tick scalar int32`, `key (JAX PRNG)`
+  - `StaticConfig` frozen dataclass: `events (MAX_EVENTS, 4) int32`,
+    `host_to_mhds (pod_size, max_degree) int32`, `n_accessible (pod_size,) int32`,
+    `mhd_to_hosts (num_mhd, max_conn) int32`, `n_connected (num_mhd,) int32`,
+    `Q_j (num_mhd,) float32`, `pod_dram float32`, `reward_variant int32`,
+    `lookahead_window int32`, `reward_lambda float32`,
+    `base_time_sec int64`, `pod_start_ts int32`, `num_events int32`
+  - `_compute_D_S_j(dealloc_buf, tick, W)` helper using einsum over dealloc_buf
+
+**1.2 reset_fn**
+- [ ] Implement `reset_fn(key, static_config) → (OctopusState, obs)`
+- Host path: call `_generate_pod(seed)` + `_build_events()` on CPU, pad to `(MAX_EVENTS, 4)`, `jax.device_put`
+- Device path: zero state, call `step_fn` departure-processing up to first tick
+
+**1.3 step_fn**
+- [ ] Implement `step_fn(state, action, static) → (OctopusState, obs, reward, done)`
+- Softmax over accessible MPDs with mask (mask inaccessible logits)
+- Scatter alloc into `dealloc_buf.at[clip(dealloc_tick, 0, MAX_TICKS-1), mhd_list].add(alloc_gb)`
+- Update `mpd_load`, `host_load`, `host_dealloc_buf`
+- Batch-subtract departures: `delta = jnp.einsum('t,tj->j', tick_mask, dealloc_buf)`
+- D_j/S_j via einsum over `dealloc_buf` (see CLAUDE.md JAX Plan Conventions for formula)
+- Separate JIT-compiled kernel per reward variant (no speculative compute)
+- Advance `event_idx`; set `done = event_idx >= num_events`
+
+**1.4 _get_obs_fn**
+- [ ] Implement observation function matching SB3 `_get_obs()` layout exactly
+- `current`: `2*max_degree + 4` — loads norm, mask, vm_norm, peak_norm, hour_sin, hour_cos
+- `A/B`: `6*max_degree + 2` — per-MPD (c_j, D_j, S_j, mask, P_j, Q_j) + global
+
+**1.5 Parity tests** (gate for Phase 2)
+- [x] Create `tests/test_jax_env_parity.py`
+- [x] `test_jax_step_matches_gym_current`: 200 steps, obs allclose atol=1e-5, reward atol=1e-6
+- [x] `test_jax_step_matches_gym_A`: same for variant A
+- [x] `test_jax_step_matches_gym_B`: same for variant B
+- [x] `test_reset_deterministic`: same seed → same first obs
+- [x] `test_jit_step_shapes` (via existing `test_jit_step_compiles_and_runs` + parity fixtures): no recompilation / shapes consistent
+- [x] All run under `jax.config.update("jax_enable_x64", True)`
+
+## Phase 2 — Vectorized rollout (no SAC yet)
+
+- [x] Implement rollout using `jax.lax.scan` over horizon H (`rollout_fn` / `make_rollout_fn`)
+- [x] `jax.vmap` over `n_envs` for parallel collectors (`make_rollout_fn`)
+- [x] Benchmark env-only steps/sec vs SubprocVecEnv at matched n_envs (`scripts/benchmark_jax_env.py`)
+- [x] Gate: no Python in hot per-step path (verify with `jax.make_jaxpr` in tests)
+
+## Phase 3 — JAX SAC
+
+- [x] MLP actor, twin critics, learned log α in `octopus/jax/sac.py`
+- [x] Host-side circular NumPy replay buffer
+- [x] JIT-compiled critic + actor + α losses; soft target update
+- [x] `scripts/train_jax.py` with CLI flags: `--run-id`, `--seed`, `--n-envs`, `--total-timesteps`, `--reward-variant`, `--lookahead-window`, `--reward-lambda`, `--trace`
+- [x] Checkpoints via Orbax or pickle; `config.json` includes `trainer: "jax"` (pickle path implemented)
+- [x] Gate: 50k-step smoke with stable losses, nonzero grad norms
+
+## Phase 4 — Fair comparison
+
+- [x] Aligned config.json fields documented in jax-plan.md §4
+- [x] Wall time, env samples/sec comparison vs SB3 (50k matched snapshot logged in `docs/plans/v4/throughput_log.md`)
+
+## Phase 5 — Deferred backlog
+
+- [ ] Multi-trace training (two options documented in jax-plan.md §5)
+- [ ] Augmentation on device
+- [ ] Async eval worker with JAX weights
+
+---
+
+# Training Throughput Speedup — COMPLETE (SPEEDUP_PLAN.md)
+
+All chunks verified complete as of 2026-05-01 (145 tests pass).
+
+- [x] Chunk 0: Fix 23 broken tests (constructor API drift)
+- [x] Chunk 1: `_mpd_dt/_mpd_mem/_mpd_n` flat arrays + Numba D_j/S_j kernels
+- [x] Chunk 2: `precompute_pod_events_arrays(TraceArrays, M, seeds)`; `_switch_trace` swaps cache
+- [x] Chunk 3: `@njit(cache=True)` on `compute_D_j`, `compute_D_S_j`
+
+---
+
 # Async Eval Worker — Tasks (async-plan)
 
 Source: `docs/plans/v3/async-plan.md`

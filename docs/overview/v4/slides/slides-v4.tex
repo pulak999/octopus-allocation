@@ -41,8 +41,9 @@
 }
 
 \title{Octopus CXL Memory Pooling:\\RL Results, Training System, and Next Steps}
+\subtitle{\small Gym/SB3 baselines + compiled JAX training stack}
 \author{Pulak Mehrotra}
-\date{April 2026}
+\date{May 2026}
 
 \begin{document}
 
@@ -432,10 +433,6 @@
 \end{frame}
 
 % =========================================================================
-% SLIDE 9 — Reward hacking
-% =========================================================================
-
-% =========================================================================
 % SLIDE 9 — Why the agent is stuck: reward hacking
 % =========================================================================
 
@@ -520,6 +517,114 @@
     \item Add an \textbf{optimal-gap} signal from the exact solver:
           tell the agent how far each placement is from the best possible choice
           for that snapshot.
+  \end{itemize}
+
+\end{frame}
+
+% =========================================================================
+% SLIDES 11--15 — JAX execution stack (dual path with SB3)
+% =========================================================================
+
+\begin{frame}{Training stack: SB3 for parity, JAX for compiled rollouts.}
+
+  \vspace{0.3em}
+  \begin{itemize}
+    \setlength{\itemsep}{0.75em}
+    \item The \textbf{scientific baseline} stays \textbf{Gymnasium + Stable-Baselines3 (SAC)}:
+          same traces, augmentation, rewards, checkpoints, W\&B, async eval --- unchanged story above.
+    \item The \textbf{execution target} adds a \textbf{JAX} simulator + trainer: immutable state,
+          \texttt{jit}-compiled transitions, \texttt{scan} rollouts, \texttt{vmap} across env batches.
+    \item \textbf{Contracts match:} obs layout and reward variants (including A/B lookahead terms)
+          are ported so runs are comparable, not two different tasks.
+    \item \textbf{Why it matters:} once vectorised env throughput is capped by Python/process overhead,
+          the next gain is eliminating the interpreter from the rollout loop altogether.
+  \end{itemize}
+
+\end{frame}
+
+\begin{frame}{What moved into arrays (the simulator-shaped part).}
+
+  \vspace{0.3em}
+  \textbf{Already in-repo direction} (numpy / flat buffers):
+  \begin{itemize}
+    \setlength{\itemsep}{0.5em}
+    \item Traces as \textbf{\texttt{TraceArrays}} --- CSR over VMs, no Python objects on the rollout path.
+    \item Loads and schedules as dense tensors: $\mathbf{c}(t)$, deallocation buffers, host-side pressure for $P_j$.
+    \item Per-MPD active VMs as \textbf{flat tables} (\texttt{(dealloc\_tick, GB)} padded per row),
+          replacing list-of-list hot loops in lookahead ($D_j$, $S_j$) and cleanup.
+  \end{itemize}
+
+  \vspace{0.6em}
+  \textbf{JAX carries the same state as a pytree:}\\
+  \centering
+  \small\texttt{(mpd\_load,\; dealloc\_buf,\; host\_*\,,\; mpd\_dt/mpd\_mem/mpd\_n,\; rng\_key\,,\; indices)}
+
+\end{frame}
+
+\begin{frame}{Two pipelines side by side.}
+
+  \centering
+  \begin{tikzpicture}[
+      every node/.style={font=\small},
+      col/.style={draw, rounded corners=2pt, fill=black!5,
+                  minimum height=0.72cm, minimum width=4.95cm,
+                  align=center, inner sep=5pt},
+      jaxbox/.style={draw, rounded corners=2pt, fill=accent!12,
+                     minimum height=0.72cm, minimum width=4.95cm,
+                     align=center, inner sep=5pt},
+      arr/.style={-{Latex[length=2.4mm]}, line width=0.95pt},
+    ]
+    % Left column: SB3
+    \node[font=\footnotesize\bfseries, anchor=south west] at (-5.05, 3.15) {SB3 reference};
+    \node[col] (gym) at (-2.5, 2.65) {\textbf{\texttt{OctopusMemPoolEnv}} \\[-0.1em]\scriptsize Gym API, numpy hot path};
+    \node[col, fill=black!8] (sb3) at (-2.5, 1.55) {SAC (\texttt{cuda}) + replay \\[-0.1em]\scriptsize Stable-Baselines3};
+    \node[col] (evalL) at (-2.5, 0.45) {Callbacks, async eval, TB/W\&B};
+    \draw[arr] (gym) -- (sb3);
+    \draw[arr] (sb3) -- (evalL);
+
+    % Right column: JAX
+    \node[font=\footnotesize\bfseries, anchor=south west] at (0.52, 3.15) {JAX stack};
+    \node[jaxbox] (jxenv) at (3.07, 2.65) {\textbf{pure \texttt{reset}/\texttt{step}} \\[-0.1em]\scriptsize immutable state ($\texttt{scan}$ inside)};
+    \node[jaxbox] (jxrl) at (3.07, 1.55) {SAC twin critics + actor + $\alpha$ \\[-0.1em]\scriptsize compiled \texttt{jit} updates};
+    \node[jaxbox] at (3.07, 0.45)
+      {$\texttt{vmap}$ env batch \;|\; checkpoints \;|\; parity tests};
+    \draw[arr] (jxenv) -- (jxrl);
+    \draw[arr] (jxrl) -- +(0,-0.75);
+  \end{tikzpicture}
+
+  \vspace{0.5em}
+  \small\textbf{Invariant:} same episode construction and reward semantics; backends differ only in how
+  steps are scheduled and compiled.
+
+\end{frame}
+
+\begin{frame}{JAX rollout and training loop (what is actually compiled).}
+
+  \begin{itemize}
+    \setlength{\itemsep}{0.7em}
+    \item \textbf{Rollouts:} \texttt{jax.lax.scan} over a fixed horizon chunk; carries simulator state +
+          policy RNG; no Python per env-step.
+    \item \textbf{Parallelism:} \texttt{vmap} over environments; minibatch matches effective
+          $\texttt{train\_freq} \times n_{\mathrm{envs}}$ semantics used in SB3 for fair comparisons.
+    \item \textbf{Updates:} actor/critic/target soft updates batched inside \texttt{jit}; gradients through
+          the policy and critics only (env dynamics are simulated, not differentiable in v1).
+    \item \textbf{Validation gate:} short rollouts asserted against Gym on fixed seeds/traces prior to
+          scaling $\rightarrow$ mismatches caught before wasting GPU hours.
+  \end{itemize}
+
+\end{frame}
+
+\begin{frame}{Message for the defence.}
+
+  \begin{itemize}
+    \setlength{\itemsep}{1.0em}
+    \item \textbf{Algorithms and results told above} are reproducible via \textbf{SB3 + Gym}
+          (\texttt{\detokenize{scripts/train_rl.py}}).
+    \item \textbf{The JAX stack delivers the same Markov abstraction} with a \textbf{compiled} execution path:
+          array-native lookahead rewards, amortised rollout cost, straightforward path to richer experiment schedules.
+    \item \textbf{Throughput story is two-tier:} multiprocessing buys the first jump; \textbf{XLA end-to-end}
+          removes the remainder of interpreter overhead for long runs and large env batches.
+    \item Repo documents the split explicitly (\texttt{\detokenize{docs/plans/v3/JAX_PARALLEL_SETUP.md}}); slides stay aligned with that architecture.
   \end{itemize}
 
 \end{frame}

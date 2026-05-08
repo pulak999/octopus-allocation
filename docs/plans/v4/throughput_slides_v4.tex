@@ -1,0 +1,181 @@
+\documentclass[11pt,aspectratio=43]{beamer}
+
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\definecolor{accent}{HTML}{2E75B6}
+\definecolor{red2}{HTML}{C0392B}
+\definecolor{green2}{HTML}{27AE60}
+
+\setbeameroption{hide notes}
+\setbeamertemplate{navigation symbols}{}
+\setbeamersize{text margin left=0.9cm,text margin right=0.9cm}
+
+\setbeamercolor{normal text}{fg=black,bg=white}
+\setbeamercolor{frametitle}{fg=black,bg=white}
+\setbeamercolor{title}{fg=black}
+\setbeamercolor{structure}{fg=black}
+\setbeamercolor{alerted text}{fg=accent}
+\setbeamercolor{block title}{fg=black,bg=black!10}
+\setbeamercolor{block body}{fg=black,bg=black!3}
+\setbeamercolor{itemize item}{fg=black}
+
+\setbeamerfont{title}{size=\normalsize,series=\bfseries}
+\setbeamerfont{frametitle}{size=\normalsize,series=\bfseries}
+\setbeamerfont{block title}{size=\small,series=\bfseries}
+\setbeamerfont{block body}{size=\small}
+
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=\paperwidth,ht=2.5ex,dp=1.0ex,rightskip=0.9cm]{author in head/foot}%
+      \hfill\insertframenumber
+    \end{beamercolorbox}%
+  }%
+}
+
+\title{Octopus Throughput Update:\\SB3 SPEEDUP status + greedy baseline}
+\author{Pulak Mehrotra}
+\date{May 2026}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \titlepage
+\end{frame}
+
+\begin{frame}{Environment throughput improved by 2.73$\times$ after SPEEDUP\_PLAN.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.60\textwidth}
+      \small
+      \resizebox{\linewidth}{!}{%
+      \begin{tabular}{@{}lrr@{}}
+        \toprule
+        Run & Steady fps & Overall fps \\
+        \midrule
+        SB3 pre-SPEEDUP & 1{,}009 & 1{,}053 \\
+        SB3 post (C1+C2+C3) & \textbf{2{,}757} & \textbf{2{,}799} \\
+        \bottomrule
+      \end{tabular}}
+
+      \vspace{0.7em}
+      \begin{itemize}
+        \setlength{\itemsep}{0.55em}
+        \item Chunks 1--3: flat arrays, disk-backed precompute cache, Numba kernels.
+        \item Throughput gain vs.\ pre-SPEEDUP: \textbf{2.73$\times$}.
+        \item Post-speedup steady windows stay in a tight 2,533--2,959 fps band.
+        \item Same benchmark setup: 300s env-only run, 32 envs, reward variant A.
+      \end{itemize}
+
+    \column{0.40\textwidth}
+      \vspace{0.6em}
+      \begin{block}{Cache behavior}
+        \small
+        First run cache prep: 379.5s\\
+        Subsequent runs: \(\sim\)3s
+      \end{block}
+
+      \vspace{0.45em}
+      \begin{block}{Interpretation}
+        \small
+        Environment stepping is no longer the dominant bottleneck in training.
+      \end{block}
+  \end{columns}
+
+\end{frame}
+
+\begin{frame}{Training snapshot: env is fast, end-to-end still gated elsewhere.}
+
+  \small
+  \begin{center}
+    \begin{tabular}{@{}lrrr@{}}
+      \toprule
+      Run & Steps & Wall time & End-to-end fps \\
+      \midrule
+      JAX (\texttt{scripts/train\_jax.py}) & 50{,}016 & 72.8s & 687 \\
+      SB3 (\texttt{scripts/train\_rl.py}) & 50{,}176 & 58.0s & \textbf{865} \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+
+  \vspace{0.8em}
+  \begin{itemize}
+    \setlength{\itemsep}{0.65em}
+    \item Matched high-level settings: \texttt{reward\_variant=current}, \texttt{lookahead\_window=200}, \texttt{reward\_lambda=0.2}, \texttt{n\_envs=32}.
+    \item Relative to old run7 training baseline (\(\sim\)53 fps), post-speedup env-only throughput is \(\sim\)52.8\(\times\) higher.
+    \item Current 50k snapshot shows SB3 is \(\sim\)1.26\(\times\) faster than JAX end-to-end.
+  \end{itemize}
+
+\end{frame}
+
+\begin{frame}{Greedy held-out baseline remains weak on both traces.}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.60\textwidth}
+      \small
+      \resizebox{\linewidth}{!}{%
+      \begin{tabular}{@{}lrrrr@{}}
+        \toprule
+        Trace (short) & Avg & Min & Max & Std \\
+        \midrule
+        LVL01-troundgrt5m & -18.4948 & -19.1440 & -18.1463 & 0.2114 \\
+        AMS20-tround & -6.6626 & -7.0170 & -4.5441 & 0.6095 \\
+        \bottomrule
+      \end{tabular}}
+
+      \vspace{0.6em}
+      \begin{itemize}
+        \setlength{\itemsep}{0.5em}
+        \item Metrics are over 50 greedy iterations per held-out trace.
+        \item Both traces use the same 96-host / 192-MPD topology.
+      \end{itemize}
+
+    \column{0.40\textwidth}
+      \vspace{0.55em}
+      \begin{block}{Takeaway}
+        \small
+        Greedy provides a stable but low-quality floor for held-out evaluation.
+      \end{block}
+
+      \vspace{0.45em}
+      \begin{block}{Next check}
+        \small
+        Compare these rewards directly against latest RL checkpoints on the same traces.
+      \end{block}
+  \end{columns}
+
+\end{frame}
+
+\begin{frame}{Held-out comparison: RL run7 vs latest greedy run.}
+
+  \small
+  \begin{center}
+    \resizebox{0.98\linewidth}{!}{%
+    \begin{tabular}{@{}llrr@{}}
+      \toprule
+      Trace & Policy run & Pooling ratio mean & Savings mean \\
+      \midrule
+      LVL01-troundgrt5m & RL (run7) & 1.0601 & -0.0601 \\
+      LVL01-troundgrt5m & Greedy (latest) & \textbf{1.0330} & \textbf{-0.0330} \\
+      \addlinespace[0.2em]
+      AMS20-tround & RL (run7) & 0.9823 & 0.0177 \\
+      AMS20-tround & Greedy (latest) & \textbf{0.7215} & \textbf{0.2785} \\
+      \bottomrule
+    \end{tabular}}
+  \end{center}
+
+  \vspace{0.65em}
+  \begin{itemize}
+    \setlength{\itemsep}{0.55em}
+    \item RL and greedy were evaluated with reward variant A (\texttt{reward\_variant=current}, \(\lambda=0.2\)).
+    \item New greedy run is better than run7 RL on both held-out traces in this latest measurement.
+    \item Gap is small on LVL01 and large on AMS20 (\(\sim\)0.26 pooling-ratio improvement for greedy).
+    \item Next step: Run 6 ablations and compare against greedy.
+  \end{itemize}
+
+\end{frame}
+
+\end{document}

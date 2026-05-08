@@ -66,6 +66,28 @@ pin via `CUDA_VISIBLE_DEVICES`.
 
 ## Current Plan
 
-Active: `docs/plans/v3/async-plan.md` (async eval worker).
-Previous: `docs/plans/v3/plan-v2.md` (training, ablations, evaluation).
-Prerequisite plan-v1 (augmentation system) is complete — see `docs/plans/v3/LOG.md`.
+Active: `docs/plans/v4/reward-ablation-plan.md` — reward ablation R1–R5, A→R2/B→R3 rename,
+pipeline correctness tests. Fresh runs use `--run-id ablation_R1_v1`, `ablation_R2_v1`, etc.
+JAX plan (`docs/plans/v4/jax-plan.md`) — parallel JAX SAC trainer — is complete (Phases 0-4 done as of 2026-05-05).
+Previous: `SPEEDUP_PLAN.md` (Chunks 0-3 all complete, 2026-05-01). See `docs/plans/v3/async-plan.md`
+(async eval worker) and `docs/plans/v3/plan-v2.md` (training / rewards / eval) for prior work.
+
+## JAX Plan Conventions
+
+- JAX module lives in `octopus/jax/` — SB3 imports stay untouched.
+- Static shape only: `MAX_TICKS=2304`. No `MAX_ACTIVE_VMS` — see below.
+- `OctopusState` is a `@chex.dataclass`. Fields: `mpd_load (num_mhd,)`, `dealloc_buf (MAX_TICKS, num_mhd)`, `host_load (pod_size,)`, `host_dealloc_buf (MAX_TICKS, pod_size)`, `max_peak`, `event_idx`, `last_depart_tick`, `key`.
+- **`_mpd_dt/_mpd_mem/_mpd_n` are NOT in JAX state.** MAX_ACTIVE_VMS=256 would overflow (max 2007 total VM allocations per MPD per episode observed in LVL01 trace). D_j and S_j are computed from `dealloc_buf` via `jnp.einsum` — mathematically identical to Numba kernel since `dealloc_buf[t,j]` = sum of memory from VMs departing at tick t on MPD j.
+- D_j formula: `weight[t] = max(0, 1-(t-tick)/W)` for `t > last_depart_tick` and `t ≤ tick+W`; then `D_j = einsum('t,tj->j', weight, dealloc_buf)`. S_j = sum over `t > tick+W`.
+- `reset_fn` runs pod selection on host (Python stdlib random — not JAX PRNG) then `jax.device_put`.
+- `step_fn` departure processing uses `jnp.einsum` batch-subtract over static tick range — no Python loop.
+- `dealloc_tick` is clipped to `MAX_TICKS-1` before scatter to handle VMs ending beyond the trace window.
+- Parity tests run under `jax.config.update("jax_enable_x64", True)`. Production training uses float32.
+- Optional deps: `pip install -e ".[jax]"` — adds jax==0.6.2, jaxlib==0.6.2, flax==0.10.7, optax==0.2.8, chex==0.1.90.
+
+## Perf Conventions (SPEEDUP_PLAN — complete)
+
+- Per-MPD active-VM state: `_mpd_dt (num_mhd, MAX_SLOTS) float64`, `_mpd_mem (num_mhd, MAX_SLOTS) float64`, `_mpd_n (num_mhd,) int32` (valid count after compaction). Numba kernels operate on these.
+- `MAX_SLOTS` grows 2× automatically on overflow via `_ensure_mpd_capacity(j)`; VMs are never dropped.
+- Precompute cache is keyed per trace — multi-trace training carries `(trace_arrays, precomputed_events)` in `_switch_trace`.
+- `precompute_pod_events_arrays(TraceArrays, M, seeds)` is the cache builder. Legacy `precompute_pod_events(raw_tuple, ...)` is kept for compatibility.

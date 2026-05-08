@@ -236,8 +236,9 @@ def pooling_simulation(
         # Drain per-host loads and purge expired MPD VM lists
         if track_vm_allocs:
             start_t = max(prev_tick + 1, 0)
-            for t in range(start_t, min(tick + 1, pod_dur)):
-                host_cxl_load -= host_dealloc_events[t, :]
+            end_t = min(tick + 1, pod_dur)
+            if end_t > start_t:
+                host_cxl_load -= host_dealloc_events[start_t:end_t, :].sum(axis=0)
             np.maximum(host_cxl_load, 0.0, out=host_cxl_load)
             _to_remove = set()
             for mhd in active_mpds:
@@ -261,6 +262,7 @@ def pooling_simulation(
 
             ctx = {
                 "tick": tick,
+                "dealloc_time": dealloc_time,
                 "pod_start_ts": _pod_start_ts,
                 "base_time": _base,
                 "num_mhd": _num_mhd,
@@ -344,7 +346,8 @@ def make_rl_alloc_cb(model, max_degree, obs_variant="current",
     policy = model.policy
     policy.set_training_mode(False)
     _device = next(policy.parameters()).device
-    _obs_dim = max_degree * 6 + 2 if obs_variant != "current" else max_degree * 2 + 4
+    _SIMPLE_OBS = {"current", "R1"}
+    _obs_dim = max_degree * 2 + 4 if obs_variant in _SIMPLE_OBS else max_degree * 6 + 2
     _obs_buf = torch.zeros(1, _obs_dim, dtype=torch.float32, device=_device)
 
     def _rl_alloc_cb(cxl_mem, mhd_list, cur_cxl_mem_vec, ctx):
@@ -353,7 +356,7 @@ def make_rl_alloc_cb(model, max_degree, obs_variant="current",
         norm = ctx["pod_rss_mem"] if ctx["pod_rss_mem"] > 0 else 1.0
         tick = ctx["tick"]
 
-        if obs_variant == "current":
+        if obs_variant in _SIMPLE_OBS:
             # --- Original 20-dim obs ------------------------------------
             loads = np.zeros(max_degree, dtype=np.float32)
             for idx, mhd in enumerate(mhd_list):
@@ -382,25 +385,31 @@ def make_rl_alloc_cb(model, max_degree, obs_variant="current",
             host_cxl_load = ctx["host_cxl_load"]
             W = lookahead_window
             t_plus_W = tick + W
+            # Hoist ctx lookups out of the per-MPD loop
+            _mhd_to_hosts = ctx.get("mhd_to_hosts", mhd_to_hosts)
+            _Q_j = ctx.get("Q_j", Q_j)
 
             # Only compute D_j/S_j for the MPDs we actually observe (mhd_list,
             # max 8).  The expanded topology has O(num_pods * 192) MPDs total;
             # iterating over all of them per-event costs ~1.2B iterations/callback.
             obs = np.zeros(max_degree * 6 + 2, dtype=np.float32)
             for k, mhd in enumerate(mhd_list):
-                dj = sj = 0.0
-                for dt, mem in mpd_vm_allocs[mhd]:
-                    if dt <= t_plus_W:
-                        dj += mem * (1.0 - (dt - tick) / W)
-                    else:
-                        sj += mem
+                alloc_data = mpd_vm_allocs[mhd]
+                if alloc_data:
+                    # Vectorised D_j/S_j — avoids Python loop over active VMs
+                    _arr = np.array(alloc_data)      # (n, 2): col0=dt, col1=mem
+                    _dts = _arr[:, 0]
+                    _mems = _arr[:, 1]
+                    _mask = _dts <= t_plus_W
+                    dj = float(np.dot(_mems[_mask], 1.0 - (_dts[_mask] - tick) / W))
+                    sj = float(_mems[~_mask].sum())
+                else:
+                    dj = sj = 0.0
                 base_idx = k * 6
                 obs[base_idx]     = float(cur_cxl_mem_vec[mhd]) / norm
                 obs[base_idx + 1] = dj / norm
                 obs[base_idx + 2] = sj / norm
                 obs[base_idx + 3] = 1.0
-                _mhd_to_hosts = ctx.get("mhd_to_hosts", mhd_to_hosts)
-                _Q_j = ctx.get("Q_j", Q_j)
                 P_j = float(sum(host_cxl_load[h] for h in _mhd_to_hosts[mhd]))
                 obs[base_idx + 4] = P_j / norm
                 obs[base_idx + 5] = float(_Q_j[mhd])
@@ -596,7 +605,7 @@ def main():
         )
         results["rl"] = run_eval(
             "RL (SAC)", rl_cb, M, trace_data, args.n_iter,
-            track_vm_allocs=(reward_variant != "current"),
+            track_vm_allocs=(reward_variant not in ("current", "R1")),
         )
 
     # ── PID ──────────────────────────────────────────────────────────

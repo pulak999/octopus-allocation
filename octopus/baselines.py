@@ -20,8 +20,7 @@ def greedy_alloc_ref(cxl_mem, mhd_list, cur_cxl_mem_vec):
     mhd_list : list[int]
         Indices of accessible MPDs for this host.
     cur_cxl_mem_vec : np.ndarray
-        Current load on every MPD (GB).  **Modified in-place** for the
-        caller's bookkeeping (matches notebook convention).
+        Current load on every MPD (GB).  Read-only; not modified.
 
     Returns
     -------
@@ -118,9 +117,6 @@ def greedy_alloc(cxl_mem, mhd_list, cur_cxl_mem_vec):
             # Next iteration: i+1 joins the pool already at water_level
 
     alloc[mhd_arr[order]] = alloc_per_sorted
-
-    # Update cur_cxl_mem_vec in-place to match ref behavior
-    cur_cxl_mem_vec[mhd_arr] += alloc[mhd_arr]
     return alloc
 
 

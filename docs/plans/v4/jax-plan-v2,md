@@ -1,0 +1,154 @@
+# JAX Plan v2 — Next Steps
+
+This document captures the practical next steps after completing JAX plan v1 core milestones:
+- JAX env parity tests (Chunks A-D) completed
+- JAX SAC + train CLI implemented (Chunk E baseline)
+- Phase 3 non-optional gate run completed (50k smoke)
+- Phase 4 initial SB3 vs JAX training snapshot completed
+
+---
+
+## Current Snapshot
+
+- **JAX env path** is strong and validated.
+- **JAX end-to-end training** works on GPU and is stable.
+- **SB3 is still faster** in current matched 50k training comparison.
+- **Phase 5 backlog items** remain open by design.
+
+---
+
+## Goal for v2
+
+Bring JAX end-to-end training to parity or better vs SB3 for the target workloads, while preserving:
+- reward/obs correctness,
+- reproducibility,
+- simple operator workflow (train/eval/checkpoint).
+
+---
+
+## Workstream 1 — Training Throughput (Highest Priority)
+
+### 1.1 Cut host/device overhead in the training loop
+- Move from per-step Python orchestration toward chunked rollout+update execution.
+- Increase JAX work per call (larger chunks) and reduce sync points.
+- Replace frequent host conversions with staged device batches where possible.
+
+### 1.2 Replay path optimization
+- Keep host replay for simplicity, but:
+  - preallocate sample tensors,
+  - reduce allocation churn in sampling path,
+  - benchmark larger batch sizes and update cadence.
+- Optional follow-up: evaluate device-resident replay if host replay remains bottleneck.
+
+### 1.3 JIT shape stabilization
+- Ensure no avoidable recompiles across long runs.
+- Lock static shapes/config paths per run and avoid accidental polymorphism.
+
+### 1.4 Throughput tuning matrix
+- Sweep small grid:
+  - `train_freq`: 16, 32, 64
+  - `gradient_steps`: 1, 2
+  - `batch_size`: 256, 512, 1024
+  - `n_envs`: 16, 32
+- Record wall-fps and stability, choose default profile.
+
+Deliverable:
+- `docs/plans/v4/throughput_log.md` updated with before/after tuned JAX runs and chosen default.
+
+---
+
+## Workstream 2 — Fairness + Apples-to-Apples Comparison
+
+### 2.1 Harden comparison protocol
+- Always log matched fields in `config.json`:
+  - `reward_variant`, `lookahead_window`, `reward_lambda`
+  - `batch_size`, `buffer_size`, `gamma`, `tau`, learning rates
+  - `train_freq`, `gradient_steps`, effective env steps/update
+  - `learning_starts`, `seed`, `trace`, `n_envs`
+
+### 2.2 Run standardized checkpoints
+- Matched SB3 vs JAX runs at:
+  - 50k (already done; keep as baseline),
+  - 200k,
+  - optional 500k calibration.
+- Capture:
+  - wall time,
+  - end-to-end fps,
+  - stability metrics (losses, grad norms),
+  - eval mean reward where available.
+
+Deliverable:
+- Comparison table in `docs/plans/v4/throughput_log.md` + summary in `docs/plans/v4/jax-log.md`.
+
+---
+
+## Workstream 3 — Correctness and Stability Hardening
+
+### 3.1 Add targeted SAC smoke tests
+- Minimal tests for:
+  - update step runs and returns finite metrics,
+  - gradients are nonzero under nondegenerate batches,
+  - checkpoint save/load roundtrip for actor/critic/alpha params.
+
+### 3.2 Runtime guardrails
+- Add assertions/warnings for:
+  - NaN/Inf in losses,
+  - NaN/Inf in grad norms,
+  - diverging alpha.
+- On failure, emit clear diagnostics and checkpoint latest safe state.
+
+### 3.3 Seed reproducibility checks
+- Run same seed twice for short horizon and compare metric envelopes.
+
+Deliverable:
+- `tests/test_jax_sac_smoke.py` (or equivalent) and trainer diagnostics integrated.
+
+---
+
+## Workstream 4 — Feature Parity Expansion (Post-Throughput)
+
+### 4.1 Reward variants in JAX trainer
+- Extend `train_jax.py` from `current` only to:
+  - `A`,
+  - `B`.
+- Validate shape/config handling and smoke stability for each.
+
+### 4.2 Evaluation pathway for JAX checkpoints
+- Add a straightforward eval script or adapter for JAX policy inference on held-out traces.
+- Keep result metrics aligned with SB3 evaluation outputs.
+
+Deliverable:
+- JAX training + evaluation support for reward variants `current/A/B`.
+
+---
+
+## Workstream 5 — Phase 5 Backlog Activation (When Ready)
+
+These stay deferred until throughput and comparison story is solid:
+- Multi-trace strategy finalization and implementation.
+- Augmentation on device path.
+- Async eval worker integration for JAX.
+- Optional JAX-native precompute rewrite.
+
+---
+
+## Proposed Execution Order
+
+1. **Throughput tuning pass** (Workstream 1)  
+2. **200k matched compare** (Workstream 2)  
+3. **SAC test + guardrails** (Workstream 3)  
+4. **Reward A/B trainer support** (Workstream 4)  
+5. **500k calibration + report** (Workstream 2 final)  
+6. **Phase 5 activation decision** (Workstream 5)
+
+---
+
+## Exit Criteria for v2
+
+Mark v2 complete when all are true:
+- JAX 200k matched runs are stable (no NaN/Inf, nonzero grad norms).
+- Comparison report is updated and reproducible.
+- JAX trainer supports required reward variants for target experiments.
+- Core tests pass and checkpoint lifecycle is verified.
+- Bookkeeping docs (`jax-log.md`, `throughput_log.md`, `TODO.md`) are current.
+

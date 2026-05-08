@@ -47,6 +47,38 @@ def _log(msg: str) -> None:
     print(f"[{ts}] {msg}")
 
 
+def _close_vecenv(venv, timeout: float = 10.0) -> None:
+    """Close a SubprocVecEnv with per-worker timeouts.
+
+    SB3's SubprocVecEnv.close() calls process.join() with no timeout, which
+    hangs indefinitely if any worker is stuck. This replaces that with a
+    terminate → kill sequence so the parent always exits promptly.
+    """
+    if not isinstance(venv, SubprocVecEnv) or venv.closed:
+        venv.close()
+        return
+    # Drain any pending async step so workers aren't blocked on pipe.send()
+    if venv.waiting:
+        for remote in venv.remotes:
+            try:
+                remote.recv()
+            except Exception:
+                pass
+    for remote in venv.remotes:
+        try:
+            remote.send(("close", None))
+        except Exception:
+            pass
+    for proc in venv.processes:
+        proc.join(timeout=timeout)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=3)
+            if proc.is_alive():
+                proc.kill()
+    venv.closed = True
+
+
 def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
                       max_degree, n_iter, obs_variant, lookahead_window,
                       device_str):
@@ -66,11 +98,12 @@ def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
     policy = policy_cpu.to(device)
     policy.set_training_mode(False)
 
-    _obs_dim = max_degree * 6 + 2 if obs_variant != "current" else max_degree * 2 + 4
+    _SIMPLE_OBS_VARIANTS = {"current", "R1"}
+    _obs_dim = max_degree * 2 + 4 if obs_variant in _SIMPLE_OBS_VARIANTS else max_degree * 6 + 2
     _obs_buf = torch.zeros(1, _obs_dim, dtype=torch.float32, device=device)
 
     all_vms, node_to_vms, node_to_machine, _, machine_sz = eval_trace_data
-    track = obs_variant != "current"
+    track = obs_variant not in _SIMPLE_OBS_VARIANTS
 
     def _make_alloc_cb(mhd_to_hosts_exp, Q_j_exp):
         """Build one RL inference closure for a single pod mapping iteration."""
@@ -80,7 +113,7 @@ def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
             norm = ctx["pod_rss_mem"] if ctx["pod_rss_mem"] > 0 else 1.0
             tick = ctx["tick"]
 
-            if obs_variant == "current":
+            if obs_variant in _SIMPLE_OBS_VARIANTS:
                 loads = np.zeros(max_degree, dtype=np.float32)
                 for idx, mhd in enumerate(mhd_list):
                     loads[idx] = float(cur_cxl_mem_vec[mhd]) / norm
@@ -149,6 +182,8 @@ def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
             )
             policy.set_training_mode(False)
 
+            import time as _time
+            _t_eval_start = _time.perf_counter()
             savings_list = []
             for i in range(n_iter):
                 pod_to_nodes = generate_pod_to_nodes(node_to_vms, len(M), 99999 + i)
@@ -156,7 +191,7 @@ def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
 
                 mhd_to_hosts_exp = None
                 Q_j_exp = None
-                if obs_variant != "current":
+                if obs_variant not in _SIMPLE_OBS_VARIANTS:
                     num_mhd_exp = len(expanded_M[0])
                     mhd_to_hosts_exp = {j: [] for j in range(num_mhd_exp)}
                     h_to_mhds = {}
@@ -181,8 +216,10 @@ def _eval_worker_main(cmd_q, res_q, policy_cpu, eval_trace_data, M,
                 )
                 savings_list.append(1.0 - ratio)
 
+            import time as _time
             arr = np.array(savings_list)
-            res_q.put((float(np.mean(arr)), float(np.std(arr)), snap_step))
+            worker_wall_s = _time.perf_counter() - _t_eval_start
+            res_q.put((float(np.mean(arr)), float(np.std(arr)), snap_step, worker_wall_s))
 
 
 # ── Pooling savings callback ──────────────────────────────────────────────
@@ -241,12 +278,14 @@ class PoolingSavingsCallback(BaseCallback):
         # 2. Collect any completed result (non-blocking)
         if self._res_q is not None:
             try:
-                mean, std, snap_step = self._res_q.get_nowait()
+                mean, std, snap_step, worker_wall_s = self._res_q.get_nowait()
                 self.logger.record("eval/pooling_savings_mean", mean)
                 self.logger.record("eval/pooling_savings_std", std)
+                self.logger.record("eval/worker_wall_s", worker_wall_s)
                 if self.verbose:
                     _log(f"  [PoolingSavings @ {snap_step}] "
                          f"mean={mean:.4f}  std={std:.4f}  "
+                         f"worker={worker_wall_s:.1f}s  "
                          f"(collected at {self.num_timesteps})")
                 self._pending_step = -1
             except queue.Empty:
@@ -254,12 +293,17 @@ class PoolingSavingsCallback(BaseCallback):
 
         # 3. Dispatch new eval if due
         if self.num_timesteps - self._last_eval_step >= self._eval_freq:
+            import time as _time
             self._last_eval_step = self.num_timesteps
+            _t0 = _time.perf_counter()
             sd_cpu = {k: v.cpu() for k, v in self.model.policy.state_dict().items()}
             self._cmd_q.put(("eval", sd_cpu, self.num_timesteps))
+            dispatch_ms = (_time.perf_counter() - _t0) * 1000.0
             self._pending_step = self.num_timesteps
+            self.logger.record("eval/dispatch_wall_ms", dispatch_ms)
             if self.verbose:
-                _log(f"  [PoolingSavings @ {self.num_timesteps}] eval dispatched (async)")
+                _log(f"  [PoolingSavings @ {self.num_timesteps}] "
+                     f"eval dispatched (async, dispatch={dispatch_ms:.1f}ms)")
         return True
 
     def on_training_end(self) -> None:
@@ -267,13 +311,22 @@ class PoolingSavingsCallback(BaseCallback):
         if self._worker is None:
             return
         self._cmd_q.put(("stop",))
-        self._worker.join(timeout=300)
+        # Give the worker time to finish any in-flight eval, then force-kill it.
+        self._worker.join(timeout=360)
+        if self._worker.is_alive():
+            _log("[PoolingSavings] worker did not exit within 360s — terminating")
+            self._worker.terminate()
+            self._worker.join(timeout=5)
+            if self._worker.is_alive():
+                self._worker.kill()
         # Drain any result that finished just before shutdown
         try:
-            mean, std, snap_step = self._res_q.get_nowait()
+            mean, std, snap_step, worker_wall_s = self._res_q.get_nowait()
             self.logger.record("eval/pooling_savings_mean", mean)
             self.logger.record("eval/pooling_savings_std", std)
-            _log(f"  [PoolingSavings @ {snap_step}] final result collected on shutdown")
+            self.logger.record("eval/worker_wall_s", worker_wall_s)
+            _log(f"  [PoolingSavings @ {snap_step}] final result collected on shutdown "
+                 f"(worker={worker_wall_s:.1f}s)")
         except queue.Empty:
             pass
 
@@ -385,8 +438,9 @@ class AugmentationLogCallback(BaseCallback):
 
 # ── helpers ──────────────────────────────────────────────────────────────
 def _make_env(trace_arrays, M, seed, variance_lambda=0.5, skip_hotfix=False,
-              aug_config=None, trace_pool=None, reward_variant="current",
-              lookahead_window=200, reward_lambda=0.2):
+              aug_config=None, trace_pool=None, trace_pool_events=None,
+              reward_variant="current", lookahead_window=200, reward_lambda=0.2,
+              sub_episode_len=576, pbrs_gamma=0.99):
     def _init():
         return OctopusMemPoolEnv(
             trace_arrays=trace_arrays,
@@ -396,9 +450,12 @@ def _make_env(trace_arrays, M, seed, variance_lambda=0.5, skip_hotfix=False,
             skip_hotfix=skip_hotfix,
             aug_config=aug_config,
             trace_pool=trace_pool,
+            trace_pool_events=trace_pool_events,
             reward_variant=reward_variant,
             lookahead_window=lookahead_window,
             reward_lambda=reward_lambda,
+            sub_episode_len=sub_episode_len,
+            pbrs_gamma=pbrs_gamma,
         )
 
     return _init
@@ -498,10 +555,11 @@ def main():
     )
     ap.add_argument(
         "--reward-variant",
-        choices=["current", "A", "B"],
+        choices=["current", "R1", "R2", "R3", "R4", "R5", "A", "B"],
         default="current",
-        help="Reward function variant: 'current' (Δpeak+λVar), 'A' (local proj. peak), "
-             "'B' (A + global stress term) (default: current)",
+        help="Reward variant: current (Δpeak+λVar), R1 (worst MPD), R2 (local dep-aware), "
+             "R3 (R2+global), R4 (sparse terminal), R5 (R4+PBRS+sub-ep). "
+             "A/B are deprecated aliases for R2/R3. (default: current)",
     )
     ap.add_argument(
         "--lookahead-window",
@@ -513,7 +571,19 @@ def main():
         "--reward-lambda",
         type=float,
         default=0.2,
-        help="λ weight for reward B's global stress term (default: 0.2)",
+        help="λ weight for reward R3's global stress term (default: 0.2)",
+    )
+    ap.add_argument(
+        "--sub-episode-len",
+        type=int,
+        default=576,
+        help="R5: sub-episode length in ticks (~2 days at 5-min resolution) (default: 576)",
+    )
+    ap.add_argument(
+        "--pbrs-gamma",
+        type=float,
+        default=0.99,
+        help="R5: discount factor γ for PBRS potential shaping (default: 0.99)",
     )
 
     # ── Augmentation args ─────────────────────────────────────────────
@@ -594,6 +664,7 @@ def main():
     # ── Build augmentation config ─────────────────────────────────────
     aug_config = None
     trace_pool = None
+    trace_pool_events = None
     if args.augmentation:
         from octopus.augmentation import AugmentationConfig
         aug_config = AugmentationConfig(
@@ -636,6 +707,25 @@ def main():
                 trace_pool.append(to_arrays(_lt(stem)))
             _log(f"  Loaded {len(trace_pool)} traces into pool")
 
+            # Precompute event caches for each trace; disk cache avoids rebuilding on re-runs
+            from octopus.data import precompute_pod_events_arrays
+            _N_PRECOMPUTE = 128
+            _CACHE_DIR = "data/cache/pod_events"
+            _log(f"  Precomputing event caches ({_N_PRECOMPUTE} seeds × {len(trace_pool)} traces)…")
+            import time as _time
+            _tc0 = _time.perf_counter()
+            trace_pool_events = []
+            for _i, _ta in enumerate(trace_pool):
+                _log(f"    trace {_i + 1}/{len(trace_pool)}…")
+                trace_pool_events.append(
+                    precompute_pod_events_arrays(
+                        _ta, M, range(_N_PRECOMPUTE),
+                        skip_hotfix=args.skip_hotfix,
+                        cache_dir=_CACHE_DIR,
+                    )
+                )
+            _log(f"  Event caches ready in {_time.perf_counter()-_tc0:.1f}s")
+
     # ── Load multiple traces if --traces given ──────────────────────
     all_trace_data = []
     if args.traces:
@@ -651,7 +741,7 @@ def main():
     # ── Precompute topology-derived structures for new obs variants ────
     mhd_to_hosts = None
     Q_j = None
-    if args.reward_variant != "current":
+    if args.reward_variant not in ("current", "R1", "A"):
         import numpy as _np
         num_mhd = len(M[0])
         mhd_to_hosts = {j: [] for j in range(num_mhd)}
@@ -679,9 +769,12 @@ def main():
                                  skip_hotfix=args.skip_hotfix,
                                  aug_config=aug_config,
                                  trace_pool=trace_pool,
+                                 trace_pool_events=trace_pool_events,
                                  reward_variant=args.reward_variant,
                                  lookahead_window=args.lookahead_window,
-                                 reward_lambda=args.reward_lambda))
+                                 reward_lambda=args.reward_lambda,
+                                 sub_episode_len=args.sub_episode_len,
+                                 pbrs_gamma=args.pbrs_gamma))
     if n_envs > 1:
         train_env = SubprocVecEnv(env_fns)
         _log(f"SubprocVecEnv: {n_envs} parallel environments")
@@ -697,7 +790,9 @@ def main():
                    skip_hotfix=args.skip_hotfix,
                    reward_variant=args.reward_variant,
                    lookahead_window=args.lookahead_window,
-                   reward_lambda=args.reward_lambda)]
+                   reward_lambda=args.reward_lambda,
+                   sub_episode_len=args.sub_episode_len,
+                   pbrs_gamma=args.pbrs_gamma)]
     )
 
     # ── Callbacks ─────────────────────────────────────────────────────
@@ -819,8 +914,8 @@ def main():
         with open(result_path, "w") as f:
             _json.dump(result, f, indent=2)
         _log(f"  Results saved → {result_path}")
-        train_env.close()
-        eval_env.close()
+        _close_vecenv(train_env)
+        _close_vecenv(eval_env)
         if wandb_run is not None:
             wandb_run.finish()
         return
@@ -828,19 +923,22 @@ def main():
     # ── Train ─────────────────────────────────────────────────────────
     _log(f"Training {args.algo.upper()} [{args.run_id}] for "
          f"{args.total_timesteps:,} timesteps …")
+    _t_train_start = time.perf_counter()
     model.learn(
         total_timesteps=args.total_timesteps,
         callback=callbacks,
         progress_bar=True,
     )
+    train_wall_s = time.perf_counter() - _t_train_start
+    _log(f"Training complete — wall time: {train_wall_s/60:.1f} min ({train_wall_s:.0f}s)")
 
     # ── Save final model ──────────────────────────────────────────────
     final_path = os.path.join(save_dir, f"octopus_{args.algo}_final")
     model.save(final_path)
     _log(f"Final model saved → {final_path}")
 
-    train_env.close()
-    eval_env.close()
+    _close_vecenv(train_env)
+    _close_vecenv(eval_env)
     if wandb_run is not None:
         wandb_run.finish()
 
